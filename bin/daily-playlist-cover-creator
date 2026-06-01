@@ -1,0 +1,5 @@
+#!/usr/bin/env ruby
+
+require_relative "../lib/daily_playlist_cover_creator/cli"
+
+exit DailyPlaylistCoverCreator::CLI.run(ARGV)
