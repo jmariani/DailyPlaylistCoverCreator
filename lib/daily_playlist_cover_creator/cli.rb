@@ -2,6 +2,7 @@
 
 require "optparse"
 require "fileutils"
+require "json"
 require_relative "gpt_image_enhancer"
 require_relative "gpt_title_suggester"
 
@@ -20,12 +21,25 @@ module DailyPlaylistCoverCreator
       image_enhancer: GptImageEnhancer.new,
       title_suggester: GptTitleSuggester.new,
       image_inspector: ImageInspector.new,
-      image_normalizer: SipsImageNormalizer.new
+      image_normalizer: SipsImageNormalizer.new,
+      notifier: SystemNotifier.new,
+      memory_store_factory: ->(destination_folder) { MemoryStore.new(destination_folder) }
     )
-      new(stdin:, stdout:, stderr:, image_opener:, image_enhancer:, title_suggester:, image_inspector:, image_normalizer:).run(argv)
+      new(
+        stdin:,
+        stdout:,
+        stderr:,
+        image_opener:,
+        image_enhancer:,
+        title_suggester:,
+        image_inspector:,
+        image_normalizer:,
+        notifier:,
+        memory_store_factory:
+      ).run(argv)
     end
 
-    def initialize(stdin:, stdout:, stderr:, image_opener:, image_enhancer:, title_suggester:, image_inspector:, image_normalizer:)
+    def initialize(stdin:, stdout:, stderr:, image_opener:, image_enhancer:, title_suggester:, image_inspector:, image_normalizer:, notifier:, memory_store_factory:)
       @stdin = stdin
       @stdout = stdout
       @stderr = stderr
@@ -34,6 +48,8 @@ module DailyPlaylistCoverCreator
       @title_suggester = title_suggester
       @image_inspector = image_inspector
       @image_normalizer = image_normalizer
+      @notifier = notifier
+      @memory_store_factory = memory_store_factory
     end
 
     def run(argv)
@@ -80,11 +96,25 @@ module DailyPlaylistCoverCreator
       end
 
       progress "Inputs validated."
+      destination_folder = prepare_work_destination_folder(destination_folder, title)
+      memory_store = @memory_store_factory.call(destination_folder)
+      memory_context = memory_store.context
+      progress "Loaded GPT memories from: #{memory_store.path}"
       copied_file = select_copy_and_approve_image(source_folder, destination_folder)
-      enhanced_file = enhance_and_name_image(copied_file, destination_folder, title)
+      enhanced_file, enhanced_title = enhance_and_name_image(copied_file, destination_folder, title, memory_context)
       open_enhanced_image(enhanced_file)
-      landscape_file = create_landscape_version_if_needed(enhanced_file, destination_folder)
-      album_cover_file = create_album_cover(landscape_file || enhanced_file, destination_folder, title)
+      landscape_file = create_landscape_version_if_needed(enhanced_file, destination_folder, memory_context)
+      album_cover_file = create_album_cover(landscape_file || enhanced_file, destination_folder, title, memory_context)
+      memory_store.remember(
+        playlist_title: title,
+        enhanced_title: enhanced_title,
+        copied_file: copied_file,
+        enhanced_file: enhanced_file,
+        landscape_file: landscape_file,
+        album_cover_file: album_cover_file
+      )
+      progress "Saved GPT memories to: #{memory_store.path}"
+      notify_finished(title, album_cover_file)
 
       @stdout.puts "Source folder: #{File.expand_path(source_folder)}"
       @stdout.puts "Destination folder: #{File.expand_path(destination_folder)}"
@@ -204,6 +234,18 @@ module DailyPlaylistCoverCreator
       true
     end
 
+    def prepare_work_destination_folder(destination_folder, title)
+      work_folder = File.join(destination_folder, filename_slug(title))
+
+      if File.exist?(work_folder) && !File.directory?(work_folder)
+        raise "Title destination path exists but is not a directory: #{work_folder}"
+      end
+
+      progress "Using title destination folder: #{File.expand_path(work_folder)}"
+      FileUtils.mkdir_p(work_folder)
+      File.expand_path(work_folder)
+    end
+
     def copy_to_destination(source_file, destination_folder)
       destination_file = unique_destination_file(destination_folder, File.basename(source_file))
       progress "Copying image to: #{File.expand_path(destination_file)}"
@@ -211,23 +253,23 @@ module DailyPlaylistCoverCreator
       File.expand_path(destination_file)
     end
 
-    def enhance_and_name_image(copied_file, destination_folder, playlist_title)
+    def enhance_and_name_image(copied_file, destination_folder, playlist_title, memory_context)
       progress "Enhancing approved image with GPT."
       normalized_file = normalize_for_gpt(copied_file, destination_folder)
       temporary_enhanced_file = unique_destination_file(destination_folder, "enhanced.png")
       @image_enhancer.enhance(
         image_file: normalized_file,
         output_file: temporary_enhanced_file,
-        prompt: IMAGE_ENHANCEMENT_PROMPT
+        prompt: prompt_with_memories(IMAGE_ENHANCEMENT_PROMPT, memory_context)
       )
 
       progress "Requesting GPT title for enhanced image."
-      suggested_title = @title_suggester.suggest(original_file: temporary_enhanced_file, playlist_title:)
+      suggested_title = @title_suggester.suggest(original_file: temporary_enhanced_file, playlist_title:, memory_context:)
       progress "GPT title received for enhanced image: #{suggested_title}"
 
       enhanced_file = unique_destination_file(destination_folder, "#{filename_slug(suggested_title)}.png")
       FileUtils.mv(temporary_enhanced_file, enhanced_file)
-      File.expand_path(enhanced_file)
+      [File.expand_path(enhanced_file), suggested_title]
     end
 
     def normalize_for_gpt(image_file, destination_folder)
@@ -240,7 +282,7 @@ module DailyPlaylistCoverCreator
       File.expand_path(normalized_file)
     end
 
-    def create_landscape_version_if_needed(enhanced_file, destination_folder)
+    def create_landscape_version_if_needed(enhanced_file, destination_folder, memory_context)
       width, height = @image_inspector.dimensions(enhanced_file)
       progress "Enhanced image dimensions: #{width}x#{height}"
 
@@ -257,15 +299,15 @@ module DailyPlaylistCoverCreator
       @image_enhancer.enhance(
         image_file: enhanced_file,
         output_file: landscape_file,
-        prompt: "#{IMAGE_ENHANCEMENT_PROMPT} Generate a 16:9 landscape version.",
-        size: "1536x864"
+        prompt: prompt_with_memories("#{IMAGE_ENHANCEMENT_PROMPT} Generate a 16:9 landscape version.", memory_context),
+        size: :auto
       )
       landscape_file = File.expand_path(landscape_file)
       open_landscape_image(landscape_file)
       landscape_file
     end
 
-    def create_album_cover(base_image_file, destination_folder, title)
+    def create_album_cover(base_image_file, destination_folder, title, memory_context)
       progress "Generating 1:1 album cover with GPT."
       album_cover_file = unique_destination_file(
         destination_folder,
@@ -274,7 +316,7 @@ module DailyPlaylistCoverCreator
       @image_enhancer.enhance(
         image_file: base_image_file,
         output_file: album_cover_file,
-        prompt: album_cover_prompt(title),
+        prompt: prompt_with_memories(album_cover_prompt(title), memory_context),
         size: "1024x1024"
       )
       album_cover_file = File.expand_path(album_cover_file)
@@ -328,6 +370,20 @@ module DailyPlaylistCoverCreator
       ALBUM_COVER_PROMPT_TEMPLATE.gsub("%title%", title)
     end
 
+    def notify_finished(title, album_cover_file)
+      progress "Sending completion notification."
+      @notifier.notify(
+        title: "Daily Playlist Cover Creator",
+        message: "Finished #{title}: #{File.basename(album_cover_file)}"
+      )
+    end
+
+    def prompt_with_memories(prompt, memory_context)
+      return prompt if memory_context.empty?
+
+      "#{prompt}\n\nMemory context from previous successful runs:\n#{memory_context}"
+    end
+
     def progress(message)
       @stdout.puts "[#{Time.now.strftime("%Y-%m-%d %H:%M:%S")}] [progress] #{message}"
       @stdout.flush
@@ -336,6 +392,16 @@ module DailyPlaylistCoverCreator
     class SystemImageOpener
       def open(path)
         system("open", path)
+      end
+    end
+
+    class SystemNotifier
+      def notify(title:, message:)
+        script = <<~APPLESCRIPT
+          display notification #{message.dump} with title #{title.dump}
+        APPLESCRIPT
+
+        system("osascript", "-e", script)
       end
     end
 
@@ -359,6 +425,52 @@ module DailyPlaylistCoverCreator
         end
 
         output_file
+      end
+    end
+
+    class MemoryStore
+      MAX_RUNS = 5
+      FILE_NAME = ".daily_playlist_cover_creator_memories.json"
+
+      attr_reader :path
+
+      def initialize(destination_folder)
+        @path = File.join(destination_folder, FILE_NAME)
+      end
+
+      def context
+        runs = data.fetch("runs", []).last(MAX_RUNS)
+        return "" if runs.empty?
+
+        runs.map do |run|
+          "- Playlist: #{run["playlist_title"]}; enhanced title: #{run["enhanced_title"]}; album cover: #{File.basename(run["album_cover_file"].to_s)}"
+        end.join("\n")
+      end
+
+      def remember(playlist_title:, enhanced_title:, copied_file:, enhanced_file:, landscape_file:, album_cover_file:)
+        current = data
+        current["runs"] ||= []
+        current["runs"] << {
+          "created_at" => Time.now.strftime("%Y-%m-%d %H:%M:%S"),
+          "playlist_title" => playlist_title,
+          "enhanced_title" => enhanced_title,
+          "copied_file" => copied_file,
+          "enhanced_file" => enhanced_file,
+          "landscape_file" => landscape_file,
+          "album_cover_file" => album_cover_file
+        }
+        current["runs"] = current["runs"].last(MAX_RUNS)
+        File.write(path, JSON.pretty_generate(current))
+      end
+
+      private
+
+      def data
+        return { "runs" => [] } unless File.exist?(path)
+
+        JSON.parse(File.read(path))
+      rescue JSON::ParserError
+        { "runs" => [] }
       end
     end
 

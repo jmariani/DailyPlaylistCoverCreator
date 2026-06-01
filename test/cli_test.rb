@@ -2,6 +2,7 @@
 
 require "minitest/autorun"
 require "base64"
+require "json"
 require "stringio"
 require "tmpdir"
 
@@ -118,10 +119,26 @@ class CLITest < Minitest::Test
 
       assert_equal 0, result[:status]
       assert Dir.exist?(destination_folder)
+      assert Dir.exist?(expected_title_folder(destination_folder))
       assert_includes result[:stdout], "[progress] Destination folder does not exist; creating:"
       assert_includes result[:stdout], "Copied image: #{expected_destination_file(destination_folder, image_file)}"
     ensure
       FileUtils.rm_rf(destination_folder) if destination_folder
+    end
+  end
+
+  def test_creates_title_folder_under_destination
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        create_image_file(source_folder)
+
+        result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE])
+
+        assert_equal 0, result[:status]
+        assert Dir.exist?(expected_title_folder(destination_folder))
+        assert_includes result[:stdout], "[progress] Using title destination folder: #{expected_title_folder(destination_folder)}"
+        assert_includes result[:stdout], "Destination folder: #{expected_title_folder(destination_folder)}"
+      end
     end
   end
 
@@ -211,7 +228,7 @@ class CLITest < Minitest::Test
         image_file = create_image_file(source_folder)
 
         result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE])
-        enhanced_file = File.join(destination_folder, "cinematic-sunrise.png")
+        enhanced_file = File.join(expected_title_folder(destination_folder), "cinematic-sunrise.png")
 
         assert_equal 0, result[:status]
         assert_includes result[:stdout], "Copied image: #{expected_destination_file(destination_folder, image_file)}"
@@ -234,7 +251,7 @@ class CLITest < Minitest::Test
           image_normalizer:
         )
         copied_file = expected_destination_file(destination_folder, image_file)
-        normalized_file = File.join(destination_folder, "cover-normalized.jpg")
+        normalized_file = File.join(expected_title_folder(destination_folder), "cover-normalized.jpg")
 
         assert_equal 0, result[:status]
         assert_equal [{ image_file: copied_file, output_file: normalized_file }], image_normalizer.normalized_images
@@ -256,8 +273,8 @@ class CLITest < Minitest::Test
           image_opener:,
           image_inspector: FakeImageInspector.new(width: 1200, height: 800)
         )
-        enhanced_file = File.join(destination_folder, "cinematic-sunrise.png")
-        album_cover_file = File.join(destination_folder, "morning-focus.png")
+        enhanced_file = File.join(expected_title_folder(destination_folder), "cinematic-sunrise.png")
+        album_cover_file = File.join(expected_title_folder(destination_folder), "morning-focus.png")
 
         assert_equal 0, result[:status]
         assert_includes result[:stdout], "Album cover: #{album_cover_file}"
@@ -278,7 +295,7 @@ class CLITest < Minitest::Test
         image_opener = FakeImageOpener.new
 
         result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE], image_opener:)
-        enhanced_file = File.join(destination_folder, "cinematic-sunrise.png")
+        enhanced_file = File.join(expected_title_folder(destination_folder), "cinematic-sunrise.png")
 
         assert_equal 0, result[:status]
         assert_includes image_opener.opened_paths, enhanced_file
@@ -319,14 +336,14 @@ class CLITest < Minitest::Test
           image_enhancer:,
           image_inspector: FakeImageInspector.new(width: 800, height: 1200)
         )
-        landscape_file = File.join(destination_folder, "cinematic-sunrise-16x9.png")
+        landscape_file = File.join(expected_title_folder(destination_folder), "cinematic-sunrise-16x9.png")
 
         assert_equal 0, result[:status]
         assert_includes result[:stdout], "[progress] Enhanced image is not landscape; generating 16:9 version with GPT."
         assert_includes result[:stdout], "[progress] Opening 16:9 image with the default application."
         assert_includes result[:stdout], "16:9 image: #{landscape_file}"
         assert_equal 3, image_enhancer.enhanced_images.length
-        assert_equal "1536x864", image_enhancer.enhanced_images[1].fetch(:size)
+        assert_equal :auto, image_enhancer.enhanced_images[1].fetch(:size)
         assert_includes image_enhancer.enhanced_images[1].fetch(:prompt), "Generate a 16:9 landscape version."
         assert_includes image_opener.opened_paths, landscape_file
         assert_equal "enhanced image", File.read(landscape_file)
@@ -345,8 +362,8 @@ class CLITest < Minitest::Test
           image_enhancer:,
           image_inspector: FakeImageInspector.new(width: 800, height: 1200)
         )
-        landscape_file = File.join(destination_folder, "cinematic-sunrise-16x9.png")
-        album_cover_file = File.join(destination_folder, "morning-focus.png")
+        landscape_file = File.join(expected_title_folder(destination_folder), "cinematic-sunrise-16x9.png")
+        album_cover_file = File.join(expected_title_folder(destination_folder), "morning-focus.png")
 
         assert_equal 0, result[:status]
         assert_includes result[:stdout], "Album cover: #{album_cover_file}"
@@ -391,7 +408,7 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "[progress] Copied image approved."
         assert_equal 2, result[:stdout].scan("Approve this copied image? [y/N]:").length
         assert_equal 4, image_opener.opened_paths.length
-        assert image_opener.opened_paths.all? { |path| path.start_with?(destination_folder) }
+        assert image_opener.opened_paths.all? { |path| path.start_with?(expected_title_folder(destination_folder)) }
       end
     end
   end
@@ -448,14 +465,15 @@ class CLITest < Minitest::Test
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         image_file = create_image_file(source_folder)
+        FileUtils.mkdir_p(expected_title_folder(destination_folder))
         existing_file = expected_destination_file(destination_folder, image_file)
         File.write(existing_file, "existing")
 
         result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE])
 
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "Copied image: #{File.join(destination_folder, "cover-2.jpg")}"
-        assert_equal "image data", File.read(File.join(destination_folder, "cover-2.jpg"))
+        assert_includes result[:stdout], "Copied image: #{File.join(expected_title_folder(destination_folder), "cover-2.jpg")}"
+        assert_equal "image data", File.read(File.join(expected_title_folder(destination_folder), "cover-2.jpg"))
       end
     end
   end
@@ -473,6 +491,74 @@ class CLITest < Minitest::Test
     end
   end
 
+  def test_gpt_steps_include_memory_context
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        create_image_file(source_folder)
+        FileUtils.mkdir_p(expected_title_folder(destination_folder))
+        memory_store = DailyPlaylistCoverCreator::CLI::MemoryStore.new(expected_title_folder(destination_folder))
+        memory_store.remember(
+          playlist_title: "Yesterday",
+          enhanced_title: "Golden Hour",
+          copied_file: "/tmp/copied.jpg",
+          enhanced_file: "/tmp/golden-hour.png",
+          landscape_file: nil,
+          album_cover_file: "/tmp/yesterday.png"
+        )
+        image_enhancer = FakeImageEnhancer.new
+        title_suggester = FakeTitleSuggester.new(GPT_TITLE)
+
+        result = run_cli(
+          ["-s", source_folder, "-d", destination_folder, "-t", TITLE],
+          image_enhancer:,
+          title_suggester:
+        )
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "[progress] Loaded GPT memories from:"
+        assert_includes image_enhancer.enhanced_images.first.fetch(:prompt), "Memory context from previous successful runs"
+        assert_includes image_enhancer.enhanced_images.first.fetch(:prompt), "Yesterday"
+        assert_includes title_suggester.memory_contexts.first, "Golden Hour"
+      end
+    end
+  end
+
+  def test_successful_run_saves_memory
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        create_image_file(source_folder)
+
+        result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE])
+        memory_file = File.join(expected_title_folder(destination_folder), DailyPlaylistCoverCreator::CLI::MemoryStore::FILE_NAME)
+        memory = JSON.parse(File.read(memory_file))
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "[progress] Saved GPT memories to:"
+        assert_equal TITLE, memory.fetch("runs").last.fetch("playlist_title")
+        assert_equal GPT_TITLE, memory.fetch("runs").last.fetch("enhanced_title")
+        assert_equal "morning-focus.png", File.basename(memory.fetch("runs").last.fetch("album_cover_file"))
+      end
+    end
+  end
+
+  def test_successful_run_sends_completion_notification
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        create_image_file(source_folder)
+        notifier = FakeNotifier.new
+
+        result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE], notifier:)
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "[progress] Sending completion notification."
+        assert_equal 1, notifier.notifications.length
+        assert_equal "Daily Playlist Cover Creator", notifier.notifications.first.fetch(:title)
+        assert_includes notifier.notifications.first.fetch(:message), "Finished #{TITLE}"
+        assert_includes notifier.notifications.first.fetch(:message), "morning-focus.png"
+      end
+    end
+  end
+
   private
 
   def create_image_file(folder, name = "cover.jpg")
@@ -483,7 +569,11 @@ class CLITest < Minitest::Test
 
   def expected_destination_file(destination_folder, image_file)
     extension = File.extname(image_file).downcase
-    File.join(destination_folder, "#{File.basename(image_file, ".*")}#{extension}")
+    File.join(expected_title_folder(destination_folder), "#{File.basename(image_file, ".*")}#{extension}")
+  end
+
+  def expected_title_folder(destination_folder)
+    File.join(destination_folder, "morning-focus")
   end
 
   def png_header(width:, height:)
@@ -503,7 +593,9 @@ class CLITest < Minitest::Test
     image_enhancer: FakeImageEnhancer.new,
     title_suggester: FakeTitleSuggester.new(GPT_TITLE),
     image_inspector: FakeImageInspector.new(width: 1200, height: 800),
-    image_normalizer: FakeImageNormalizer.new
+    image_normalizer: FakeImageNormalizer.new,
+    notifier: FakeNotifier.new,
+    memory_store_factory: ->(destination_folder) { DailyPlaylistCoverCreator::CLI::MemoryStore.new(destination_folder) }
   )
     stdin = StringIO.new(stdin)
     stdout = StringIO.new
@@ -517,7 +609,9 @@ class CLITest < Minitest::Test
       image_enhancer:,
       title_suggester:,
       image_inspector:,
-      image_normalizer:
+      image_normalizer:,
+      notifier:,
+      memory_store_factory:
     )
 
     {
@@ -581,12 +675,29 @@ class CLITest < Minitest::Test
   end
 
   class FakeTitleSuggester
+    attr_reader :memory_contexts
+
     def initialize(title)
       @title = title
+      @memory_contexts = []
     end
 
-    def suggest(original_file:, playlist_title:)
+    def suggest(original_file:, playlist_title:, memory_context: "")
+      @memory_contexts << memory_context
       @title
+    end
+  end
+
+  class FakeNotifier
+    attr_reader :notifications
+
+    def initialize
+      @notifications = []
+    end
+
+    def notify(title:, message:)
+      @notifications << { title:, message: }
+      true
     end
   end
 end

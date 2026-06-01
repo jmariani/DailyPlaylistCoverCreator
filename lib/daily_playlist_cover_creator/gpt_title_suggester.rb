@@ -9,7 +9,7 @@ module DailyPlaylistCoverCreator
       @model = model
     end
 
-    def suggest(original_file:, playlist_title:)
+    def suggest(original_file:, playlist_title:, memory_context: "")
       raise "OPENAI_API_KEY is required to suggest an image title with GPT." if @api_key.to_s.empty?
 
       require "openai"
@@ -17,7 +17,7 @@ module DailyPlaylistCoverCreator
       client = OpenAI::Client.new(api_key: @api_key)
       response = client.responses.create(
         model: @model,
-        input: prompt(original_file:, playlist_title:)
+        input: prompt(original_file:, playlist_title:, memory_context:)
       )
 
       response.output_text.to_s.strip
@@ -25,12 +25,13 @@ module DailyPlaylistCoverCreator
 
     private
 
-    def prompt(original_file:, playlist_title:)
+    def prompt(original_file:, playlist_title:, memory_context:)
       <<~PROMPT
       Suggest a concise title for an enhanced daily playlist cover image.
 
       Playlist title: #{playlist_title}
       Enhanced image filename: #{File.basename(original_file)}
+      #{memory_section(memory_context)}
 
         Requirements:
         - Return only the suggested title.
@@ -39,6 +40,12 @@ module DailyPlaylistCoverCreator
         - Do not include quotes.
         - Do not include punctuation unless it is essential.
       PROMPT
+    end
+
+    def memory_section(memory_context)
+      return "" if memory_context.to_s.empty?
+
+      "\nMemory context from previous successful runs:\n#{memory_context}"
     end
   end
 end

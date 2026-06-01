@@ -16,9 +16,9 @@ bin/daily-playlist-cover-creator -s /path/to/source/folder -d /path/to/destinati
 
 If any option is missing, the application prompts for it.
 
-The application validates that the source folder exists and is a directory, creates the destination folder if it does not exist, and checks that the title is present.
+The application validates that the source folder exists and is a directory, creates the destination folder if it does not exist, and checks that the title is present. Under the destination folder, it creates a title-named subfolder such as `morning-focus`; all generated files for that run are stored there.
 
-It selects a random image by choosing a random item from the source folder. If the item is an image file, it copies the file to the destination folder. If the item is a folder, it repeats that selection inside the folder until an image file is found.
+It selects a random image by choosing a random item from the source folder. If the item is an image file, it copies the file to the title-named destination subfolder. If the item is a folder, it repeats that selection inside the folder until an image file is found.
 
 After an image is selected, the app copies it to the destination, opens the copied image with the default application, and asks you to approve it. Enter `y` or `yes` to continue. Any other answer removes that copied image and starts another random selection.
 
@@ -33,6 +33,10 @@ Approved images are normalized to JPEG before GPT upload so unusual image encodi
 If the enhanced image is not landscape, the app also asks GPT to generate a 16:9 landscape version, saves it with `-16x9` in the filename, and opens it with the default application.
 
 Finally, the app uses the enhanced image, or the 16:9 version when present, to generate a 1:1 album cover. It uses the playlist title in the image prompt, saves the generated cover with the title as the filename, and opens it with the default application.
+
+When the process completes successfully, the app raises a macOS notification.
+
+The GPT steps use local memories stored in `.daily_playlist_cover_creator_memories.json` inside the title-named destination subfolder. Each successful run remembers recent playlist titles, enhanced titles, and generated files, then includes that context in future GPT image and title prompts.
 
 Set `OPENAI_API_KEY` before running the app:
 
