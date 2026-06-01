@@ -1,6 +1,12 @@
 #!/usr/bin/env ruby
 
+require "pathname"
+
+APP_ROOT = Pathname.new(__dir__).join("..").realpath
+
+Dir.chdir(APP_ROOT)
+
 require "bundler/setup"
-require_relative "../lib/daily_playlist_cover_creator/cli"
+require APP_ROOT.join("lib/daily_playlist_cover_creator/cli").to_s
 
 exit DailyPlaylistCoverCreator::CLI.run(ARGV)

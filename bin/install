@@ -1,0 +1,16 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "pathname"
+
+app_root = Pathname.new(__dir__).join("..").realpath
+source = app_root.join("bin/daily-playlist-cover-creator")
+install_dir = Pathname.new(ENV.fetch("INSTALL_DIR", File.join(Dir.home, ".local/bin"))).expand_path
+target = install_dir.join("daily-playlist-cover-creator")
+
+FileUtils.mkdir_p(install_dir)
+FileUtils.ln_sf(source, target)
+
+puts "Installed #{target}"
+puts "Run with: daily-playlist-cover-creator -s SOURCE -d DESTINATION -t TITLE"

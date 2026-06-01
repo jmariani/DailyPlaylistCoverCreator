@@ -193,6 +193,74 @@ class CLITest < Minitest::Test
     end
   end
 
+  def test_uses_file_parameter_as_source_file
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_file = create_image_file(source_folder, "chosen.png")
+
+        result = run_cli(["-f", image_file, "-d", destination_folder, "-t", TITLE])
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "Source file: #{image_file}"
+        refute_includes result[:stdout], "Enter source folder:"
+        refute_includes result[:stdout], "[progress] Scanning folder:"
+        assert_includes result[:stdout], "Copied image: #{File.join(expected_title_folder(destination_folder), "chosen.png")}"
+        assert File.exist?(File.join(expected_title_folder(destination_folder), "chosen.png"))
+      end
+    end
+  end
+
+  def test_rejects_invalid_file_parameter
+    Dir.mktmpdir do |destination_folder|
+      result = run_cli(["-f", "/path/that/does/not/exist.jpg", "-d", destination_folder, "-t", TITLE])
+
+      assert_equal 1, result[:status]
+      assert_includes result[:stderr], "Source file does not exist or is not a supported image file"
+    end
+  end
+
+  def test_rejects_unsupported_file_parameter
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        file = File.join(source_folder, "notes.txt")
+        File.write(file, "not an image")
+
+        result = run_cli(["-f", file, "-d", destination_folder, "-t", TITLE])
+
+        assert_equal 1, result[:status]
+        assert_includes result[:stderr], "Source file does not exist or is not a supported image file"
+      end
+    end
+  end
+
+  def test_rejecting_file_parameter_does_not_reselect
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_file = create_image_file(source_folder, "chosen.jpg")
+
+        result = run_cli(["-f", image_file, "-d", destination_folder, "-t", TITLE], stdin: "n\n")
+
+        assert_equal 1, result[:status]
+        assert_includes result[:stderr], "Provided source file was rejected."
+        assert_equal 1, result[:stdout].scan("Approve this copied image? [y/N]:").length
+      end
+    end
+  end
+
+  def test_source_folder_is_optional_when_file_parameter_is_set
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_file = create_image_file(source_folder, "chosen.webp")
+
+        result = run_cli(["--file", image_file, "--destination-folder", destination_folder, "--title", TITLE])
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "Source file: #{image_file}"
+        refute_includes result[:stdout], "Source folder:"
+      end
+    end
+  end
+
   def test_prints_progress_while_running
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|

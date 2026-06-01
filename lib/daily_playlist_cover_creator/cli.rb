@@ -58,8 +58,9 @@ module DailyPlaylistCoverCreator
       source_folder = options[:source_folder]
       destination_folder = options[:destination_folder]
       title = options[:title]
+      source_file = options[:file]
 
-      unless source_folder
+      unless source_folder || source_file
         source_folder = prompt_for_source_folder
       end
 
@@ -71,7 +72,7 @@ module DailyPlaylistCoverCreator
         title = prompt_for_title
       end
 
-      if source_folder.empty?
+      if source_folder.to_s.empty? && source_file.to_s.empty?
         @stderr.puts "Source folder is required."
         return 1
       end
@@ -86,7 +87,12 @@ module DailyPlaylistCoverCreator
         return 1
       end
 
-      unless File.directory?(source_folder)
+      if source_file && !image_file?(source_file)
+        @stderr.puts "Source file does not exist or is not a supported image file: #{source_file}"
+        return 1
+      end
+
+      if source_folder && !File.directory?(source_folder)
         @stderr.puts "Source folder does not exist or is not a directory: #{source_folder}"
         return 1
       end
@@ -100,7 +106,7 @@ module DailyPlaylistCoverCreator
       memory_store = @memory_store_factory.call(destination_folder)
       memory_context = memory_store.context
       progress "Loaded GPT memories from: #{memory_store.path}"
-      copied_file = select_copy_and_approve_image(source_folder, destination_folder)
+      copied_file = select_copy_and_approve_image(source_folder, destination_folder, source_file)
       enhanced_file, enhanced_title = enhance_and_name_image(copied_file, destination_folder, title, memory_context)
       open_enhanced_image(enhanced_file)
       landscape_file = create_landscape_version_if_needed(enhanced_file, destination_folder, memory_context)
@@ -116,7 +122,8 @@ module DailyPlaylistCoverCreator
       progress "Saved GPT memories to: #{memory_store.path}"
       notify_finished(title, album_cover_file)
 
-      @stdout.puts "Source folder: #{File.expand_path(source_folder)}"
+      @stdout.puts "Source folder: #{File.expand_path(source_folder)}" if source_folder
+      @stdout.puts "Source file: #{File.expand_path(source_file)}" if source_file
       @stdout.puts "Destination folder: #{File.expand_path(destination_folder)}"
       @stdout.puts "Title: #{title}"
       @stdout.puts "Image enhancement prompt: #{IMAGE_ENHANCEMENT_PROMPT}"
@@ -169,9 +176,9 @@ module DailyPlaylistCoverCreator
       @stdin.gets&.chomp.to_s
     end
 
-    def select_copy_and_approve_image(source_folder, destination_folder)
+    def select_copy_and_approve_image(source_folder, destination_folder, source_file = nil)
       loop do
-        selected_file = select_random_image_file(source_folder)
+        selected_file = source_file || select_random_image_file(source_folder)
         progress "Selected image file: #{File.expand_path(selected_file)}"
         copied_file = copy_to_destination(selected_file, destination_folder)
         @stdout.puts "Copied image ready for approval: #{copied_file}"
@@ -190,6 +197,7 @@ module DailyPlaylistCoverCreator
 
         progress "Copied image rejected; removing it and choosing another."
         FileUtils.rm_f(copied_file)
+        raise ImageApprovalRequiredError, "Provided source file was rejected." if source_file
       end
     end
 
@@ -488,6 +496,10 @@ module DailyPlaylistCoverCreator
 
         opts.on("-t", "--title TITLE", "Title for the generated playlist cover") do |title|
           options[:title] = title
+        end
+
+        opts.on("-f", "--file FILE", "Use this image file instead of selecting randomly") do |file|
+          options[:file] = file
         end
 
         opts.on("-h", "--help", "Show this help") do
