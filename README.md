@@ -1,6 +1,6 @@
 # Daily Playlist Cover Creator
 
-A Ruby command-line application that accepts a source folder as a named parameter.
+A personal Ruby app to create daily playlist covers. The command-line application accepts a source folder as a named parameter.
 
 ## Usage
 
