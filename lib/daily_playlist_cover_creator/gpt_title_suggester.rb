@@ -27,10 +27,10 @@ module DailyPlaylistCoverCreator
 
     def prompt(original_file:, playlist_title:)
       <<~PROMPT
-        Suggest a concise title for a daily playlist cover image.
+      Suggest a concise title for an enhanced daily playlist cover image.
 
-        Playlist title: #{playlist_title}
-        Original image filename: #{File.basename(original_file)}
+      Playlist title: #{playlist_title}
+      Enhanced image filename: #{File.basename(original_file)}
 
         Requirements:
         - Return only the suggested title.

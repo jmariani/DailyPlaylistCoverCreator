@@ -22,16 +22,30 @@ It selects a random image by choosing a random item from the source folder. If t
 
 After an image is selected, the app copies it to the destination, opens the copied image with the default application, and asks you to approve it. Enter `y` or `yes` to continue. Any other answer removes that copied image and starts another random selection.
 
-Supported image extensions are `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp`, `.tif`, and `.tiff`.
+Supported image extensions are `.jpg`, `.jpeg`, `.png`, and `.webp`.
 
 The copied image keeps its original filename. If that filename already exists in the destination folder, the app appends a counter such as `cover-2.jpg`.
 
-GPT title suggestion is planned for a later step.
+After you approve the copied image, the app enhances it with GPT using the prompt below. It then asks GPT for a title, saves the enhanced image with that title, such as `cinematic-sunrise.png`, and opens the enhanced image with the default application.
+
+Approved images are normalized to JPEG before GPT upload so unusual image encodings or color modes are less likely to be rejected by the image API.
+
+If the enhanced image is not landscape, the app also asks GPT to generate a 16:9 landscape version, saves it with `-16x9` in the filename, and opens it with the default application.
+
+Finally, the app uses the enhanced image, or the 16:9 version when present, to generate a 1:1 album cover. It uses the playlist title in the image prompt, saves the generated cover with the title as the filename, and opens it with the default application.
+
+Set `OPENAI_API_KEY` before running the app:
+
+```sh
+export OPENAI_API_KEY="your-api-key"
+```
+
+By default the app uses `gpt-image-1.5` for image enhancement and `gpt-5.2` for title suggestion. You can override those with `OPENAI_IMAGE_MODEL` and `OPENAI_TEXT_MODEL`.
 
 The planned image enhancement prompt is:
 
 ```text
-enhance. cinematic. keep aspect ratio. do not add text.
+Apply cinematic enhancements to this image while preserving the original aspect ratio. Improve lighting, contrast, color grading, depth, sharpness, and overall visual polish. Keep the image composition faithful to the original. Do not add any text, letters, captions, logos, watermarks, or typography.
 ```
 
 ## Tests
