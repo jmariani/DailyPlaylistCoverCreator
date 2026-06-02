@@ -9,6 +9,7 @@ GEM
       base64
       cgi
       connection_pool
+    webrick (1.9.2)
 
 PLATFORMS
   arm64-darwin-25
@@ -17,6 +18,7 @@ PLATFORMS
 DEPENDENCIES
   minitest (~> 5.25)
   openai (~> 0.64.0)
+  webrick (~> 1.9)
 
 CHECKSUMS
   base64 (0.3.0) sha256=27337aeabad6ffae05c265c450490628ef3ebd4b67be58257393227588f5a97b
@@ -24,6 +26,7 @@ CHECKSUMS
   connection_pool (3.0.2) sha256=33fff5ba71a12d2aa26cb72b1db8bba2a1a01823559fb01d29eb74c286e62e0a
   minitest (5.27.0) sha256=2d3b17f8a36fe7801c1adcffdbc38233b938eb0b4966e97a6739055a45fa77d5
   openai (0.64.0) sha256=1d54769d056c33aa148790036f4b4a2034a1fcc2e29100d5171e85d267f77df8
+  webrick (1.9.2) sha256=beb4a15fc474defed24a3bda4ffd88a490d517c9e4e6118c3edce59e45864131
 
 BUNDLED WITH
   4.0.10

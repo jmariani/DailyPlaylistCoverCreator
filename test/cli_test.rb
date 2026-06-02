@@ -101,6 +101,17 @@ class CLITest < Minitest::Test
     end
   end
 
+  def test_spotify_login_authorizes_and_exits
+    spotify_auth = FakeSpotifyAuth.new
+
+    result = run_cli(["--spotify-login"], spotify_auth:)
+
+    assert_equal 0, result[:status]
+    assert_equal 1, spotify_auth.logins
+    assert_includes result[:stdout], "[progress] Starting Spotify OAuth login."
+    assert_includes result[:stdout], "Spotify login complete."
+  end
+
   def test_rejects_missing_source_folder
     Dir.mktmpdir do |destination_folder|
       result = run_cli(["--source-folder", "/path/that/does/not/exist", "--destination-folder", destination_folder, "--title", TITLE])
@@ -206,6 +217,115 @@ class CLITest < Minitest::Test
         refute_includes result[:stdout], "[progress] Scanning folder:"
         assert_includes result[:stdout], "Copied image: #{File.join(expected_title_folder(destination_folder), "chosen.png")}"
         assert File.exist?(File.join(expected_title_folder(destination_folder), "chosen.png"))
+      end
+    end
+  end
+
+  def test_imports_playlist_file_to_spotify
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        create_image_file(source_folder)
+        playlist_file = File.join(destination_folder, "Daily Mix.txt")
+        File.write(playlist_file, "First Song - Artist\nMissing Song\n")
+        spotify_client = FakeSpotifyClient.new(
+          name: "Daily Mix",
+          url: "https://open.spotify.com/playlist/abc",
+          total: 2,
+          added: 1,
+          missing: ["Missing Song"]
+        )
+
+        result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE, "-p", playlist_file], spotify_client:)
+
+        assert_equal 0, result[:status]
+        assert_equal [playlist_file], spotify_client.imported_files
+        assert_includes result[:stdout], "[progress] Creating Spotify playlist from: #{playlist_file}"
+        assert_includes result[:stdout], "[progress] Spotify playlist created: Daily Mix; added 1/2 tracks."
+        assert_includes result[:stdout], "Playlist file: #{playlist_file}"
+        assert_includes result[:stdout], "Spotify playlist: Daily Mix"
+        assert_includes result[:stdout], "Spotify playlist URL: https://open.spotify.com/playlist/abc"
+        assert_includes result[:stdout], "Spotify tracks added: 1/2"
+        assert_includes result[:stdout], "Spotify tracks not found: Missing Song"
+      end
+    end
+  end
+
+  def test_rejects_missing_playlist_file
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        create_image_file(source_folder)
+
+        result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE, "-p", File.join(destination_folder, "missing.txt")])
+
+        assert_equal 1, result[:status]
+        assert_includes result[:stderr], "Playlist file does not exist or is not a file"
+      end
+    end
+  end
+
+  def test_prompts_with_remembered_folder_destination_and_title_when_options_are_missing
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_file = create_image_file(source_folder)
+        defaults_store = FakeDefaultsStore.new(
+          "source_kind" => "folder",
+          "source_folder" => source_folder,
+          "destination_folder" => destination_folder,
+          "title" => TITLE
+        )
+
+        result = run_cli([], stdin: "\n\n\ny\n", defaults_store:)
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "Enter source folder [#{source_folder}]:"
+        assert_includes result[:stdout], "Enter destination folder [#{destination_folder}]:"
+        assert_includes result[:stdout], "Enter title [#{TITLE}]:"
+        assert_includes result[:stdout], "[progress] Using remembered value for enter source folder: #{source_folder}"
+        assert_includes result[:stdout], "[progress] Using remembered value for enter destination folder: #{destination_folder}"
+        assert_includes result[:stdout], "[progress] Using remembered value for enter title: #{TITLE}"
+        assert_includes result[:stdout], "Copied image: #{expected_destination_file(destination_folder, image_file)}"
+      end
+    end
+  end
+
+  def test_prompts_with_remembered_file_when_last_source_was_a_file
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_file = create_image_file(source_folder, "remembered.webp")
+        defaults_store = FakeDefaultsStore.new(
+          "source_kind" => "file",
+          "source_file" => image_file,
+          "destination_folder" => destination_folder,
+          "title" => TITLE
+        )
+
+        result = run_cli([], stdin: "\n\n\ny\n", defaults_store:)
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "Enter source file [#{image_file}]:"
+        refute_includes result[:stdout], "[progress] Scanning folder:"
+        assert_includes result[:stdout], "[progress] Using remembered value for enter source file: #{image_file}"
+        assert_includes result[:stdout], "Source file: #{image_file}"
+        assert_includes result[:stdout], "Copied image: #{File.join(expected_title_folder(destination_folder), "remembered.webp")}"
+      end
+    end
+  end
+
+  def test_successful_run_remembers_effective_parameter_values
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        create_image_file(source_folder)
+        defaults_store = FakeDefaultsStore.new
+
+        result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE], defaults_store:)
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "[progress] Remembering parameter values for future runs."
+        assert_equal "folder", defaults_store.saved.fetch(:source_kind)
+        assert_equal source_folder, defaults_store.saved.fetch(:source_folder)
+        assert_nil defaults_store.saved.fetch(:source_file)
+        assert_equal destination_folder, defaults_store.saved.fetch(:destination_folder)
+        assert_equal TITLE, defaults_store.saved.fetch(:title)
       end
     end
   end
@@ -563,8 +683,8 @@ class CLITest < Minitest::Test
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         create_image_file(source_folder)
-        FileUtils.mkdir_p(expected_title_folder(destination_folder))
-        memory_store = DailyPlaylistCoverCreator::CLI::MemoryStore.new(expected_title_folder(destination_folder))
+        memory_file = File.join(destination_folder, "global-memories.json")
+        memory_store = DailyPlaylistCoverCreator::CLI::MemoryStore.new(memory_file)
         memory_store.remember(
           playlist_title: "Yesterday",
           enhanced_title: "Golden Hour",
@@ -579,7 +699,8 @@ class CLITest < Minitest::Test
         result = run_cli(
           ["-s", source_folder, "-d", destination_folder, "-t", TITLE],
           image_enhancer:,
-          title_suggester:
+          title_suggester:,
+          memory_store_factory: ->(_destination_folder) { memory_store }
         )
 
         assert_equal 0, result[:status]
@@ -596,17 +717,29 @@ class CLITest < Minitest::Test
       Dir.mktmpdir do |destination_folder|
         create_image_file(source_folder)
 
-        result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE])
-        memory_file = File.join(expected_title_folder(destination_folder), DailyPlaylistCoverCreator::CLI::MemoryStore::FILE_NAME)
+        memory_file = File.join(destination_folder, "global-memories.json")
+        memory_store = DailyPlaylistCoverCreator::CLI::MemoryStore.new(memory_file)
+
+        result = run_cli(
+          ["-s", source_folder, "-d", destination_folder, "-t", TITLE],
+          memory_store_factory: ->(_destination_folder) { memory_store }
+        )
         memory = JSON.parse(File.read(memory_file))
 
         assert_equal 0, result[:status]
         assert_includes result[:stdout], "[progress] Saved GPT memories to:"
+        refute File.exist?(File.join(expected_title_folder(destination_folder), DailyPlaylistCoverCreator::CLI::MemoryStore::FILE_NAME))
         assert_equal TITLE, memory.fetch("runs").last.fetch("playlist_title")
         assert_equal GPT_TITLE, memory.fetch("runs").last.fetch("enhanced_title")
         assert_equal "morning-focus.png", File.basename(memory.fetch("runs").last.fetch("album_cover_file"))
       end
     end
+  end
+
+  def test_memory_store_defaults_to_global_home_file
+    memory_store = DailyPlaylistCoverCreator::CLI::MemoryStore.new
+
+    assert_equal File.join(Dir.home, DailyPlaylistCoverCreator::CLI::MemoryStore::FILE_NAME), memory_store.path
   end
 
   def test_successful_run_sends_completion_notification
@@ -663,7 +796,10 @@ class CLITest < Minitest::Test
     image_inspector: FakeImageInspector.new(width: 1200, height: 800),
     image_normalizer: FakeImageNormalizer.new,
     notifier: FakeNotifier.new,
-    memory_store_factory: ->(destination_folder) { DailyPlaylistCoverCreator::CLI::MemoryStore.new(destination_folder) }
+    spotify_auth: FakeSpotifyAuth.new,
+    spotify_client: FakeSpotifyClient.new,
+    defaults_store: FakeDefaultsStore.new,
+    memory_store_factory: ->(destination_folder) { DailyPlaylistCoverCreator::CLI::MemoryStore.new(File.join(destination_folder, "test-memories.json")) }
   )
     stdin = StringIO.new(stdin)
     stdout = StringIO.new
@@ -679,6 +815,9 @@ class CLITest < Minitest::Test
       image_inspector:,
       image_normalizer:,
       notifier:,
+      spotify_auth:,
+      spotify_client:,
+      defaults_store:,
       memory_store_factory:
     )
 
@@ -766,6 +905,56 @@ class CLITest < Minitest::Test
     def notify(title:, message:)
       @notifications << { title:, message: }
       true
+    end
+  end
+
+  class FakeSpotifyClient
+    attr_reader :imported_files
+
+    def initialize(name: "Daily Mix", url: nil, total: 0, added: 0, missing: [])
+      @result = { name:, url:, total:, added:, missing: }
+      @imported_files = []
+    end
+
+    def import_playlist(file_path:)
+      @imported_files << file_path
+      @result
+    end
+  end
+
+  class FakeSpotifyAuth
+    attr_reader :logins
+
+    def initialize
+      @logins = 0
+    end
+
+    def login
+      @logins += 1
+      "spotify-access-token"
+    end
+  end
+
+  class FakeDefaultsStore
+    attr_reader :saved
+
+    def initialize(defaults = {})
+      @defaults = defaults
+      @saved = nil
+    end
+
+    def load
+      @defaults
+    end
+
+    def save(source_kind:, source_folder:, source_file:, destination_folder:, title:)
+      @saved = {
+        source_kind:,
+        source_folder:,
+        source_file:,
+        destination_folder:,
+        title:
+      }
     end
   end
 end

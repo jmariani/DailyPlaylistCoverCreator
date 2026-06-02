@@ -5,6 +5,7 @@ require "fileutils"
 require "json"
 require_relative "gpt_image_enhancer"
 require_relative "gpt_title_suggester"
+require_relative "spotify_client"
 
 module DailyPlaylistCoverCreator
   class CLI
@@ -23,8 +24,13 @@ module DailyPlaylistCoverCreator
       image_inspector: ImageInspector.new,
       image_normalizer: SipsImageNormalizer.new,
       notifier: SystemNotifier.new,
-      memory_store_factory: ->(destination_folder) { MemoryStore.new(destination_folder) }
+      spotify_auth: nil,
+      spotify_client: nil,
+      defaults_store: DefaultsStore.new,
+      memory_store_factory: ->(_destination_folder) { MemoryStore.new }
     )
+      spotify_auth ||= SpotifyAuth.new(stdout: stdout)
+      spotify_client ||= SpotifyClient.new(token_provider: spotify_auth)
       new(
         stdin:,
         stdout:,
@@ -35,11 +41,14 @@ module DailyPlaylistCoverCreator
         image_inspector:,
         image_normalizer:,
         notifier:,
+        spotify_auth:,
+        spotify_client:,
+        defaults_store:,
         memory_store_factory:
       ).run(argv)
     end
 
-    def initialize(stdin:, stdout:, stderr:, image_opener:, image_enhancer:, title_suggester:, image_inspector:, image_normalizer:, notifier:, memory_store_factory:)
+    def initialize(stdin:, stdout:, stderr:, image_opener:, image_enhancer:, title_suggester:, image_inspector:, image_normalizer:, notifier:, spotify_auth:, spotify_client:, defaults_store:, memory_store_factory:)
       @stdin = stdin
       @stdout = stdout
       @stderr = stderr
@@ -49,27 +58,43 @@ module DailyPlaylistCoverCreator
       @image_inspector = image_inspector
       @image_normalizer = image_normalizer
       @notifier = notifier
+      @spotify_auth = spotify_auth
+      @spotify_client = spotify_client
+      @defaults_store = defaults_store
       @memory_store_factory = memory_store_factory
     end
 
     def run(argv)
       progress "Starting daily playlist cover creator."
       options = parse(argv)
+      if options[:spotify_login]
+        progress "Starting Spotify OAuth login."
+        @spotify_auth.login
+        @stdout.puts "Spotify login complete."
+        return 0
+      end
+
+      defaults = @defaults_store.load
       source_folder = options[:source_folder]
       destination_folder = options[:destination_folder]
       title = options[:title]
       source_file = options[:file]
+      playlist = options[:playlist]
 
       unless source_folder || source_file
-        source_folder = prompt_for_source_folder
+        if defaults["source_kind"] == "file" && present?(defaults["source_file"])
+          source_file = prompt_for_source_file(defaults["source_file"])
+        else
+          source_folder = prompt_for_source_folder(defaults["source_folder"])
+        end
       end
 
       unless destination_folder
-        destination_folder = prompt_for_destination_folder
+        destination_folder = prompt_for_destination_folder(defaults["destination_folder"])
       end
 
       unless title
-        title = prompt_for_title
+        title = prompt_for_title(defaults["title"])
       end
 
       if source_folder.to_s.empty? && source_file.to_s.empty?
@@ -97,11 +122,18 @@ module DailyPlaylistCoverCreator
         return 1
       end
 
+      if playlist && !File.file?(playlist)
+        @stderr.puts "Playlist file does not exist or is not a file: #{playlist}"
+        return 1
+      end
+
       unless ensure_destination_folder(destination_folder)
         return 1
       end
 
       progress "Inputs validated."
+      spotify_playlist = import_spotify_playlist(playlist)
+      destination_root = destination_folder
       destination_folder = prepare_work_destination_folder(destination_folder, title)
       memory_store = @memory_store_factory.call(destination_folder)
       memory_context = memory_store.context
@@ -120,12 +152,25 @@ module DailyPlaylistCoverCreator
         album_cover_file: album_cover_file
       )
       progress "Saved GPT memories to: #{memory_store.path}"
+      remember_defaults(
+        source_folder: source_folder,
+        source_file: source_file,
+        destination_folder: destination_root,
+        title: title
+      )
       notify_finished(title, album_cover_file)
 
       @stdout.puts "Source folder: #{File.expand_path(source_folder)}" if source_folder
       @stdout.puts "Source file: #{File.expand_path(source_file)}" if source_file
       @stdout.puts "Destination folder: #{File.expand_path(destination_folder)}"
       @stdout.puts "Title: #{title}"
+      @stdout.puts "Playlist file: #{File.expand_path(playlist)}" if playlist
+      if spotify_playlist
+        @stdout.puts "Spotify playlist: #{spotify_playlist.fetch(:name)}"
+        @stdout.puts "Spotify playlist URL: #{spotify_playlist.fetch(:url)}" if spotify_playlist.fetch(:url)
+        @stdout.puts "Spotify tracks added: #{spotify_playlist.fetch(:added)}/#{spotify_playlist.fetch(:total)}"
+        @stdout.puts "Spotify tracks not found: #{spotify_playlist.fetch(:missing).join(", ")}" unless spotify_playlist.fetch(:missing).empty?
+      end
       @stdout.puts "Image enhancement prompt: #{IMAGE_ENHANCEMENT_PROMPT}"
       @stdout.puts "Copied image: #{copied_file}"
       @stdout.puts "Enhanced image: #{enhanced_file}"
@@ -158,22 +203,60 @@ module DailyPlaylistCoverCreator
       options
     end
 
-    def prompt_for_source_folder
+    def prompt_for_source_folder(default_value = nil)
       progress "Source folder was not provided."
-      @stdout.print "Enter source folder: "
-      @stdin.gets&.chomp.to_s
+      prompt_with_default("Enter source folder", default_value)
     end
 
-    def prompt_for_destination_folder
+    def prompt_for_source_file(default_value = nil)
+      progress "Source file was not provided."
+      prompt_with_default("Enter source file", default_value)
+    end
+
+    def prompt_for_destination_folder(default_value = nil)
       progress "Destination folder was not provided."
-      @stdout.print "Enter destination folder: "
-      @stdin.gets&.chomp.to_s
+      prompt_with_default("Enter destination folder", default_value)
     end
 
-    def prompt_for_title
+    def prompt_for_title(default_value = nil)
       progress "Title was not provided."
-      @stdout.print "Enter title: "
-      @stdin.gets&.chomp.to_s
+      prompt_with_default("Enter title", default_value)
+    end
+
+    def prompt_with_default(label, default_value)
+      @stdout.print default_value.to_s.empty? ? "#{label}: " : "#{label} [#{default_value}]: "
+      answer = @stdin.gets&.chomp.to_s
+
+      if answer.empty? && present?(default_value)
+        progress "Using remembered value for #{label.downcase}: #{default_value}"
+        return default_value
+      end
+
+      answer
+    end
+
+    def remember_defaults(source_folder:, source_file:, destination_folder:, title:)
+      progress "Remembering parameter values for future runs."
+      @defaults_store.save(
+        source_kind: source_file ? "file" : "folder",
+        source_folder: source_folder,
+        source_file: source_file,
+        destination_folder: destination_folder,
+        title: title
+      )
+    end
+
+    def present?(value)
+      !value.to_s.empty?
+    end
+
+    def import_spotify_playlist(playlist_file)
+      return nil unless playlist_file
+
+      progress "Creating Spotify playlist from: #{File.expand_path(playlist_file)}"
+      result = @spotify_client.import_playlist(file_path: playlist_file)
+      progress "Spotify playlist created: #{result.fetch(:name)}; added #{result.fetch(:added)}/#{result.fetch(:total)} tracks."
+      result
     end
 
     def select_copy_and_approve_image(source_folder, destination_folder, source_file = nil)
@@ -442,8 +525,8 @@ module DailyPlaylistCoverCreator
 
       attr_reader :path
 
-      def initialize(destination_folder)
-        @path = File.join(destination_folder, FILE_NAME)
+      def initialize(path = File.join(Dir.home, FILE_NAME))
+        @path = path
       end
 
       def context
@@ -468,6 +551,7 @@ module DailyPlaylistCoverCreator
           "album_cover_file" => album_cover_file
         }
         current["runs"] = current["runs"].last(MAX_RUNS)
+        FileUtils.mkdir_p(File.dirname(path))
         File.write(path, JSON.pretty_generate(current))
       end
 
@@ -482,9 +566,47 @@ module DailyPlaylistCoverCreator
       end
     end
 
+    class DefaultsStore
+      FILE_NAME = ".daily_playlist_cover_creator_defaults.json"
+
+      attr_reader :path
+
+      def initialize(path: File.join(Dir.home, FILE_NAME))
+        @path = path
+      end
+
+      def load
+        return {} unless File.exist?(path)
+
+        JSON.parse(File.read(path))
+      rescue JSON::ParserError
+        {}
+      end
+
+      def save(source_kind:, source_folder:, source_file:, destination_folder:, title:)
+        FileUtils.mkdir_p(File.dirname(path))
+        File.write(
+          path,
+          JSON.pretty_generate(
+            {
+              "updated_at" => Time.now.strftime("%Y-%m-%d %H:%M:%S"),
+              "source_kind" => source_kind,
+              "source_folder" => source_folder,
+              "source_file" => source_file,
+              "destination_folder" => destination_folder,
+              "title" => title
+            }
+          )
+        )
+      end
+    end
+
     def parser(options = {})
       OptionParser.new do |opts|
         opts.banner = "Usage: daily-playlist-cover-creator --source-folder PATH --destination-folder PATH --title TITLE"
+        opts.separator ""
+        opts.separator "Missing values prompt with the last successful run's value as the default when available."
+        opts.separator ""
 
         opts.on("-s", "--source-folder PATH", "Folder containing source files") do |path|
           options[:source_folder] = path
@@ -496,6 +618,14 @@ module DailyPlaylistCoverCreator
 
         opts.on("-t", "--title TITLE", "Title for the generated playlist cover") do |title|
           options[:title] = title
+        end
+
+        opts.on("-p", "--playlist FILE", "Playlist text file to import into Spotify") do |playlist|
+          options[:playlist] = playlist
+        end
+
+        opts.on("--spotify-login", "Authorize Spotify and save a refresh token") do
+          options[:spotify_login] = true
         end
 
         opts.on("-f", "--file FILE", "Use this image file instead of selecting randomly") do |file|
