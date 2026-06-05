@@ -10,7 +10,6 @@ require_relative "../lib/daily_playlist_cover_creator/cli"
 
 class CLITest < Minitest::Test
   TITLE = "Morning Focus"
-  GPT_TITLE = "Cinematic Sunrise"
 
   def test_prompts_for_source_folder_when_option_is_missing
     Dir.mktmpdir do |source_folder|
@@ -24,8 +23,9 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Destination folder: #{destination_folder}"
         assert_includes result[:stdout], "Title: #{TITLE}"
         assert_includes result[:stdout], "Image enhancement prompt: #{DailyPlaylistCoverCreator::CLI::IMAGE_ENHANCEMENT_PROMPT}"
-        assert_includes result[:stdout], "Copied image: #{expected_destination_file(destination_folder, image_file)}"
+        assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
         assert File.exist?(expected_destination_file(destination_folder, image_file))
+        refute File.exist?(image_file)
         assert_empty result[:stderr]
       end
     end
@@ -43,7 +43,7 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Source folder: #{source_folder}"
         assert_includes result[:stdout], "Title: #{TITLE}"
         assert_includes result[:stdout], "Image enhancement prompt: #{DailyPlaylistCoverCreator::CLI::IMAGE_ENHANCEMENT_PROMPT}"
-        assert_includes result[:stdout], "Copied image: #{expected_destination_file(destination_folder, image_file)}"
+        assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
         assert File.exist?(expected_destination_file(destination_folder, image_file))
         assert_empty result[:stderr]
       end
@@ -62,7 +62,7 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Destination folder: #{destination_folder}"
         assert_includes result[:stdout], "Title: #{TITLE}"
         assert_includes result[:stdout], "Image enhancement prompt: #{DailyPlaylistCoverCreator::CLI::IMAGE_ENHANCEMENT_PROMPT}"
-        assert_includes result[:stdout], "Copied image: #{expected_destination_file(destination_folder, image_file)}"
+        assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
         assert File.exist?(expected_destination_file(destination_folder, image_file))
         assert_empty result[:stderr]
       end
@@ -132,7 +132,7 @@ class CLITest < Minitest::Test
       assert Dir.exist?(destination_folder)
       assert Dir.exist?(expected_title_folder(destination_folder))
       assert_includes result[:stdout], "[progress] Destination folder does not exist; creating:"
-      assert_includes result[:stdout], "Copied image: #{expected_destination_file(destination_folder, image_file)}"
+      assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
     ensure
       FileUtils.rm_rf(destination_folder) if destination_folder
     end
@@ -179,7 +179,7 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Destination folder: #{destination_folder}"
         assert_includes result[:stdout], "Title: #{TITLE}"
         assert_includes result[:stdout], "Image enhancement prompt: #{DailyPlaylistCoverCreator::CLI::IMAGE_ENHANCEMENT_PROMPT}"
-        assert_includes result[:stdout], "Copied image: #{expected_destination_file(destination_folder, image_file)}"
+        assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
         assert File.exist?(expected_destination_file(destination_folder, image_file))
         assert_empty result[:stderr]
       end
@@ -197,7 +197,7 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Destination folder: #{destination_folder}"
         assert_includes result[:stdout], "Title: #{TITLE}"
         assert_includes result[:stdout], "Image enhancement prompt: #{DailyPlaylistCoverCreator::CLI::IMAGE_ENHANCEMENT_PROMPT}"
-        assert_includes result[:stdout], "Copied image: #{expected_destination_file(destination_folder, image_file)}"
+        assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
         assert File.exist?(expected_destination_file(destination_folder, image_file))
         assert_empty result[:stderr]
       end
@@ -215,7 +215,7 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Source file: #{image_file}"
         refute_includes result[:stdout], "Enter source folder:"
         refute_includes result[:stdout], "[progress] Scanning folder:"
-        assert_includes result[:stdout], "Copied image: #{File.join(expected_title_folder(destination_folder), "chosen.png")}"
+        assert_includes result[:stdout], "Moved image: #{File.join(expected_title_folder(destination_folder), "chosen.png")}"
         assert File.exist?(File.join(expected_title_folder(destination_folder), "chosen.png"))
       end
     end
@@ -283,7 +283,7 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "[progress] Using remembered value for enter source folder: #{source_folder}"
         assert_includes result[:stdout], "[progress] Using remembered value for enter destination folder: #{destination_folder}"
         assert_includes result[:stdout], "[progress] Using remembered value for enter title: #{TITLE}"
-        assert_includes result[:stdout], "Copied image: #{expected_destination_file(destination_folder, image_file)}"
+        assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
       end
     end
   end
@@ -306,7 +306,7 @@ class CLITest < Minitest::Test
         refute_includes result[:stdout], "[progress] Scanning folder:"
         assert_includes result[:stdout], "[progress] Using remembered value for enter source file: #{image_file}"
         assert_includes result[:stdout], "Source file: #{image_file}"
-        assert_includes result[:stdout], "Copied image: #{File.join(expected_title_folder(destination_folder), "remembered.webp")}"
+        assert_includes result[:stdout], "Moved image: #{File.join(expected_title_folder(destination_folder), "remembered.webp")}"
       end
     end
   end
@@ -362,7 +362,7 @@ class CLITest < Minitest::Test
 
         assert_equal 1, result[:status]
         assert_includes result[:stderr], "Provided source file was rejected."
-        assert_equal 1, result[:stdout].scan("Approve this copied image? [y/N]:").length
+        assert_equal 1, result[:stdout].scan("Approve this source image? [y/N]:").length
       end
     end
   end
@@ -395,14 +395,15 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "[progress] Scanning folder: #{source_folder}"
         assert_includes result[:stdout], "[progress] Random item selected:"
         assert_includes result[:stdout], "[progress] Selected image file:"
-        assert_includes result[:stdout], "[progress] Copying image to:"
-        assert_includes result[:stdout], "[progress] Opening copied image with the default application."
-        assert_includes result[:stdout], "Approve this copied image? [y/N]:"
-        assert_includes result[:stdout], "[progress] Copied image approved."
+        assert_includes result[:stdout], "[progress] Moving image to:"
+        assert_includes result[:stdout], "[progress] Opening source image with the default application."
+        assert_includes result[:stdout], "Approve this source image? [y/N]:"
+        assert_includes result[:stdout], "[progress] Source image approved."
+        assert_includes result[:stdout], "[progress] Moving image to:"
         assert_includes result[:stdout], "[progress] Normalizing image for GPT upload:"
         assert_includes result[:stdout], "[progress] Enhancing approved image with GPT."
-        assert_includes result[:stdout], "[progress] Requesting GPT title for enhanced image."
-        assert_includes result[:stdout], "[progress] GPT title received for enhanced image: #{GPT_TITLE}"
+        refute_includes result[:stdout], "[progress] Requesting GPT title for enhanced image."
+        refute_includes result[:stdout], "[progress] GPT title received for enhanced image:"
         assert_includes result[:stdout], "[progress] Opening enhanced image with the default application."
         assert_includes result[:stdout], "[progress] Generating 1:1 album cover with GPT."
         assert_includes result[:stdout], "[progress] Opening album cover image with the default application."
@@ -410,16 +411,16 @@ class CLITest < Minitest::Test
     end
   end
 
-  def test_enhances_approved_image_and_names_it_with_gpt_title
+  def test_enhances_approved_image_and_names_it_with_title_parameter
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         image_file = create_image_file(source_folder)
 
         result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE])
-        enhanced_file = File.join(expected_title_folder(destination_folder), "cinematic-sunrise.png")
+        enhanced_file = expected_enhanced_file(destination_folder)
 
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "Copied image: #{expected_destination_file(destination_folder, image_file)}"
+        assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
         assert_includes result[:stdout], "Enhanced image: #{enhanced_file}"
         assert_equal "enhanced image", File.read(enhanced_file)
       end
@@ -461,7 +462,7 @@ class CLITest < Minitest::Test
           image_opener:,
           image_inspector: FakeImageInspector.new(width: 1200, height: 800)
         )
-        enhanced_file = File.join(expected_title_folder(destination_folder), "cinematic-sunrise.png")
+        enhanced_file = expected_enhanced_file(destination_folder)
         album_cover_file = File.join(expected_title_folder(destination_folder), "morning-focus.png")
 
         assert_equal 0, result[:status]
@@ -483,7 +484,7 @@ class CLITest < Minitest::Test
         image_opener = FakeImageOpener.new
 
         result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE], image_opener:)
-        enhanced_file = File.join(expected_title_folder(destination_folder), "cinematic-sunrise.png")
+        enhanced_file = expected_enhanced_file(destination_folder)
 
         assert_equal 0, result[:status]
         assert_includes image_opener.opened_paths, enhanced_file
@@ -524,7 +525,7 @@ class CLITest < Minitest::Test
           image_enhancer:,
           image_inspector: FakeImageInspector.new(width: 800, height: 1200)
         )
-        landscape_file = File.join(expected_title_folder(destination_folder), "cinematic-sunrise-16x9.png")
+        landscape_file = File.join(expected_title_folder(destination_folder), "cover-enh-16x9.png")
 
         assert_equal 0, result[:status]
         assert_includes result[:stdout], "[progress] Enhanced image is not landscape; generating 16:9 version with GPT."
@@ -550,7 +551,7 @@ class CLITest < Minitest::Test
           image_enhancer:,
           image_inspector: FakeImageInspector.new(width: 800, height: 1200)
         )
-        landscape_file = File.join(expected_title_folder(destination_folder), "cinematic-sunrise-16x9.png")
+        landscape_file = File.join(expected_title_folder(destination_folder), "cover-enh-16x9.png")
         album_cover_file = File.join(expected_title_folder(destination_folder), "morning-focus.png")
 
         assert_equal 0, result[:status]
@@ -583,7 +584,7 @@ class CLITest < Minitest::Test
     end
   end
 
-  def test_reselects_image_until_copied_image_is_approved
+  def test_reselects_image_until_source_image_is_approved
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         create_image_file(source_folder)
@@ -592,11 +593,12 @@ class CLITest < Minitest::Test
         result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE], stdin: "n\ny\n", image_opener:)
 
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "[progress] Copied image rejected; removing it and choosing another."
-        assert_includes result[:stdout], "[progress] Copied image approved."
-        assert_equal 2, result[:stdout].scan("Approve this copied image? [y/N]:").length
+        assert_includes result[:stdout], "[progress] Source image rejected; choosing another."
+        assert_includes result[:stdout], "[progress] Source image approved."
+        assert_equal 2, result[:stdout].scan("Approve this source image? [y/N]:").length
         assert_equal 4, image_opener.opened_paths.length
-        assert image_opener.opened_paths.all? { |path| path.start_with?(expected_title_folder(destination_folder)) }
+        assert_equal source_folder, File.dirname(image_opener.opened_paths.first)
+        assert image_opener.opened_paths.any? { |path| path.start_with?(expected_title_folder(destination_folder)) }
       end
     end
   end
@@ -612,7 +614,7 @@ class CLITest < Minitest::Test
         )
 
         assert_equal 0, result[:status]
-        assert_includes result[:stderr], "Could not open copied image automatically"
+        assert_includes result[:stderr], "Could not open source image automatically"
       end
     end
   end
@@ -625,13 +627,13 @@ class CLITest < Minitest::Test
         result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE], stdin: "")
 
         assert_equal 1, result[:status]
-        assert_includes result[:stdout], "Approve this copied image? [y/N]:"
+        assert_includes result[:stdout], "Approve this source image? [y/N]:"
         assert_includes result[:stderr], "Image approval is required."
       end
     end
   end
 
-  def test_copies_image_from_nested_folder
+  def test_moves_image_from_nested_folder
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         nested_folder = File.join(source_folder, "nested")
@@ -642,7 +644,7 @@ class CLITest < Minitest::Test
 
         assert_equal 0, result[:status]
         assert_includes result[:stdout], "[progress] Selected item is a folder; descending."
-        assert_includes result[:stdout], "Copied image: #{expected_destination_file(destination_folder, image_file)}"
+        assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
         assert_equal "image data", File.read(expected_destination_file(destination_folder, image_file))
         assert_empty result[:stderr]
       end
@@ -660,7 +662,7 @@ class CLITest < Minitest::Test
         result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE])
 
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "Copied image: #{File.join(expected_title_folder(destination_folder), "cover-2.jpg")}"
+        assert_includes result[:stdout], "Moved image: #{File.join(expected_title_folder(destination_folder), "cover-2.jpg")}"
         assert_equal "image data", File.read(File.join(expected_title_folder(destination_folder), "cover-2.jpg"))
       end
     end
@@ -694,12 +696,10 @@ class CLITest < Minitest::Test
           album_cover_file: "/tmp/yesterday.png"
         )
         image_enhancer = FakeImageEnhancer.new
-        title_suggester = FakeTitleSuggester.new(GPT_TITLE)
 
         result = run_cli(
           ["-s", source_folder, "-d", destination_folder, "-t", TITLE],
           image_enhancer:,
-          title_suggester:,
           memory_store_factory: ->(_destination_folder) { memory_store }
         )
 
@@ -707,7 +707,7 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "[progress] Loaded GPT memories from:"
         assert_includes image_enhancer.enhanced_images.first.fetch(:prompt), "Memory context from previous successful runs"
         assert_includes image_enhancer.enhanced_images.first.fetch(:prompt), "Yesterday"
-        assert_includes title_suggester.memory_contexts.first, "Golden Hour"
+        assert_includes image_enhancer.enhanced_images.first.fetch(:prompt), "Golden Hour"
       end
     end
   end
@@ -730,7 +730,7 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "[progress] Saved GPT memories to:"
         refute File.exist?(File.join(expected_title_folder(destination_folder), DailyPlaylistCoverCreator::CLI::MemoryStore::FILE_NAME))
         assert_equal TITLE, memory.fetch("runs").last.fetch("playlist_title")
-        assert_equal GPT_TITLE, memory.fetch("runs").last.fetch("enhanced_title")
+        assert_equal TITLE, memory.fetch("runs").last.fetch("enhanced_title")
         assert_equal "morning-focus.png", File.basename(memory.fetch("runs").last.fetch("album_cover_file"))
       end
     end
@@ -777,6 +777,10 @@ class CLITest < Minitest::Test
     File.join(destination_folder, "morning-focus")
   end
 
+  def expected_enhanced_file(destination_folder, original_name = "cover.jpg")
+    File.join(expected_title_folder(destination_folder), "#{File.basename(original_name, ".*")}-enh.png")
+  end
+
   def png_header(width:, height:)
     "\x89PNG\r\n\x1A\n".b + ("\x00".b * 8) + [width, height].pack("N2") + ("\x00".b * 8)
   end
@@ -792,7 +796,6 @@ class CLITest < Minitest::Test
     stdin: "y\n",
     image_opener: FakeImageOpener.new,
     image_enhancer: FakeImageEnhancer.new,
-    title_suggester: FakeTitleSuggester.new(GPT_TITLE),
     image_inspector: FakeImageInspector.new(width: 1200, height: 800),
     image_normalizer: FakeImageNormalizer.new,
     notifier: FakeNotifier.new,
@@ -811,7 +814,6 @@ class CLITest < Minitest::Test
       stderr:,
       image_opener:,
       image_enhancer:,
-      title_suggester:,
       image_inspector:,
       image_normalizer:,
       notifier:,
@@ -878,20 +880,6 @@ class CLITest < Minitest::Test
 
     def dimensions(_path)
       [@width, @height]
-    end
-  end
-
-  class FakeTitleSuggester
-    attr_reader :memory_contexts
-
-    def initialize(title)
-      @title = title
-      @memory_contexts = []
-    end
-
-    def suggest(original_file:, playlist_title:, memory_context: "")
-      @memory_contexts << memory_context
-      @title
     end
   end
 

@@ -34,15 +34,15 @@ After each successful run, the application remembers the source folder or source
 
 The application validates that the source folder exists and is a directory, creates the destination folder if it does not exist, and checks that the title is present. Under the destination folder, it creates a title-named subfolder such as `morning-focus`; all generated files for that run are stored there.
 
-It selects a random image by choosing a random item from the source folder. If the item is an image file, it copies the file to the title-named destination subfolder. If the item is a folder, it repeats that selection inside the folder until an image file is found. When `--file` is provided, the app skips random selection and uses that file directly.
+It selects a random image by choosing a random item from the source folder. If the item is an image file, it moves the file to the title-named destination subfolder after approval. If the item is a folder, it repeats that selection inside the folder until an image file is found. When `--file` is provided, the app skips random selection and uses that file directly.
 
-After an image is selected, the app copies it to the destination, opens the copied image with the default application, and asks you to approve it. Enter `y` or `yes` to continue. Any other answer removes that copied image and starts another random selection.
+After an image is selected, the app opens the original source image with the default application and asks you to approve it. Enter `y` or `yes` to continue. Any other answer starts another random selection. The image is moved to the destination only after you approve it.
 
 Supported image extensions are `.jpg`, `.jpeg`, `.png`, and `.webp`.
 
-The copied image keeps its original filename. If that filename already exists in the destination folder, the app appends a counter such as `cover-2.jpg`.
+The moved image keeps its original filename. If that filename already exists in the destination folder, the app appends a counter such as `cover-2.jpg`.
 
-After you approve the copied image, the app enhances it with GPT using the prompt below. It then asks GPT for a title, saves the enhanced image with that title, such as `cinematic-sunrise.png`, and opens the enhanced image with the default application.
+After you approve the source image, the app moves it to the destination and enhances it with GPT using the prompt below. It saves the enhanced image using the original filename with `-enh`, such as `cover-enh.png`, and opens the enhanced image with the default application.
 
 Approved images are normalized to JPEG before GPT upload so unusual image encodings or color modes are less likely to be rejected by the image API.
 

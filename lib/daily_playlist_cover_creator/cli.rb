@@ -4,7 +4,6 @@ require "optparse"
 require "fileutils"
 require "json"
 require_relative "gpt_image_enhancer"
-require_relative "gpt_title_suggester"
 require_relative "spotify_client"
 
 module DailyPlaylistCoverCreator
@@ -20,7 +19,6 @@ module DailyPlaylistCoverCreator
       stderr: $stderr,
       image_opener: SystemImageOpener.new,
       image_enhancer: GptImageEnhancer.new,
-      title_suggester: GptTitleSuggester.new,
       image_inspector: ImageInspector.new,
       image_normalizer: SipsImageNormalizer.new,
       notifier: SystemNotifier.new,
@@ -37,7 +35,6 @@ module DailyPlaylistCoverCreator
         stderr:,
         image_opener:,
         image_enhancer:,
-        title_suggester:,
         image_inspector:,
         image_normalizer:,
         notifier:,
@@ -48,13 +45,12 @@ module DailyPlaylistCoverCreator
       ).run(argv)
     end
 
-    def initialize(stdin:, stdout:, stderr:, image_opener:, image_enhancer:, title_suggester:, image_inspector:, image_normalizer:, notifier:, spotify_auth:, spotify_client:, defaults_store:, memory_store_factory:)
+    def initialize(stdin:, stdout:, stderr:, image_opener:, image_enhancer:, image_inspector:, image_normalizer:, notifier:, spotify_auth:, spotify_client:, defaults_store:, memory_store_factory:)
       @stdin = stdin
       @stdout = stdout
       @stderr = stderr
       @image_opener = image_opener
       @image_enhancer = image_enhancer
-      @title_suggester = title_suggester
       @image_inspector = image_inspector
       @image_normalizer = image_normalizer
       @notifier = notifier
@@ -138,7 +134,7 @@ module DailyPlaylistCoverCreator
       memory_store = @memory_store_factory.call(destination_folder)
       memory_context = memory_store.context
       progress "Loaded GPT memories from: #{memory_store.path}"
-      copied_file = select_copy_and_approve_image(source_folder, destination_folder, source_file)
+      copied_file = select_move_and_approve_image(source_folder, destination_folder, source_file)
       enhanced_file, enhanced_title = enhance_and_name_image(copied_file, destination_folder, title, memory_context)
       open_enhanced_image(enhanced_file)
       landscape_file = create_landscape_version_if_needed(enhanced_file, destination_folder, memory_context)
@@ -172,7 +168,7 @@ module DailyPlaylistCoverCreator
         @stdout.puts "Spotify tracks not found: #{spotify_playlist.fetch(:missing).join(", ")}" unless spotify_playlist.fetch(:missing).empty?
       end
       @stdout.puts "Image enhancement prompt: #{IMAGE_ENHANCEMENT_PROMPT}"
-      @stdout.puts "Copied image: #{copied_file}"
+      @stdout.puts "Moved image: #{copied_file}"
       @stdout.puts "Enhanced image: #{enhanced_file}"
       @stdout.puts "16:9 image: #{landscape_file}" if landscape_file
       @stdout.puts "Album cover: #{album_cover_file}"
@@ -259,14 +255,13 @@ module DailyPlaylistCoverCreator
       result
     end
 
-    def select_copy_and_approve_image(source_folder, destination_folder, source_file = nil)
+    def select_move_and_approve_image(source_folder, destination_folder, source_file = nil)
       loop do
         selected_file = source_file || select_random_image_file(source_folder)
         progress "Selected image file: #{File.expand_path(selected_file)}"
-        copied_file = copy_to_destination(selected_file, destination_folder)
-        @stdout.puts "Copied image ready for approval: #{copied_file}"
-        open_image(copied_file, label: "copied")
-        @stdout.print "Approve this copied image? [y/N]: "
+        @stdout.puts "Source image ready for approval: #{File.expand_path(selected_file)}"
+        open_image(selected_file, label: "source")
+        @stdout.print "Approve this source image? [y/N]: "
 
         answer = @stdin.gets
         if answer.nil?
@@ -274,12 +269,11 @@ module DailyPlaylistCoverCreator
         end
 
         if approved?(answer)
-          progress "Copied image approved."
-          return copied_file
+          progress "Source image approved."
+          return move_to_destination(selected_file, destination_folder)
         end
 
-        progress "Copied image rejected; removing it and choosing another."
-        FileUtils.rm_f(copied_file)
+        progress "Source image rejected; choosing another."
         raise ImageApprovalRequiredError, "Provided source file was rejected." if source_file
       end
     end
@@ -337,10 +331,10 @@ module DailyPlaylistCoverCreator
       File.expand_path(work_folder)
     end
 
-    def copy_to_destination(source_file, destination_folder)
+    def move_to_destination(source_file, destination_folder)
       destination_file = unique_destination_file(destination_folder, File.basename(source_file))
-      progress "Copying image to: #{File.expand_path(destination_file)}"
-      FileUtils.cp(source_file, destination_file)
+      progress "Moving image to: #{File.expand_path(destination_file)}"
+      FileUtils.mv(source_file, destination_file)
       File.expand_path(destination_file)
     end
 
@@ -354,13 +348,9 @@ module DailyPlaylistCoverCreator
         prompt: prompt_with_memories(IMAGE_ENHANCEMENT_PROMPT, memory_context)
       )
 
-      progress "Requesting GPT title for enhanced image."
-      suggested_title = @title_suggester.suggest(original_file: temporary_enhanced_file, playlist_title:, memory_context:)
-      progress "GPT title received for enhanced image: #{suggested_title}"
-
-      enhanced_file = unique_destination_file(destination_folder, "#{filename_slug(suggested_title)}.png")
+      enhanced_file = unique_destination_file(destination_folder, "#{File.basename(copied_file, ".*")}-enh.png")
       FileUtils.mv(temporary_enhanced_file, enhanced_file)
-      [File.expand_path(enhanced_file), suggested_title]
+      [File.expand_path(enhanced_file), playlist_title]
     end
 
     def normalize_for_gpt(image_file, destination_folder)
