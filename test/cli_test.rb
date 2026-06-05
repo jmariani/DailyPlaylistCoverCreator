@@ -470,7 +470,7 @@ class CLITest < Minitest::Test
         assert_equal enhanced_file, image_enhancer.enhanced_images.last.fetch(:image_file)
         assert_equal album_cover_file, image_enhancer.enhanced_images.last.fetch(:output_file)
         assert_equal "1024x1024", image_enhancer.enhanced_images.last.fetch(:size)
-        assert_equal "Create a 1:1 album cover using this image as base. The title color is complementary to the background. Justify the title. The title is #{TITLE}", image_enhancer.enhanced_images.last.fetch(:prompt)
+        assert_equal DailyPlaylistCoverCreator::CLI::ALBUM_COVER_PROMPT_TEMPLATE.gsub("%title%", TITLE), image_enhancer.enhanced_images.last.fetch(:prompt)
         assert_equal album_cover_file, image_opener.opened_paths.last
         assert_equal "enhanced image", File.read(album_cover_file)
       end

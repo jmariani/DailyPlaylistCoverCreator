@@ -50,7 +50,7 @@ Approved images are normalized to JPEG before GPT upload so unusual image encodi
 
 If the enhanced image is not landscape, the app also asks GPT to generate a 16:9 landscape version, saves it with `-16x9` in the filename, and opens it with the default application.
 
-Finally, the app uses the enhanced image, or the 16:9 version when present, to generate a 1:1 album cover. It uses the playlist title in the image prompt, saves the generated cover with the title as the filename, and opens it with the default application.
+Finally, the app uses the enhanced image, or the 16:9 version when present, to generate a 1:1 album cover. The cover prompt asks for polished professional cover art with stronger composition, cinematic color, contrast, depth, and legible justified title typography related to the image subject and mood. It saves the generated cover with the title as the filename and opens it with the default application.
 
 When the process completes successfully, the app raises a macOS notification.
 
@@ -85,7 +85,7 @@ On each run, the app asks GPT for the latest available OpenAI Images API model a
 The planned image enhancement prompt is:
 
 ```text
-Enhance this image with a cinematic look while preserving the original composition and aspect ratio. Improve lighting, contrast, color grading, sharpness, depth, dynamic range, and overall visual polish. Keep the scene faithful to the source image. Do not add text, captions, logos, typography, watermarks, or new objects.
+Enhance this image with a bright, well-lit, high-end editorial look while preserving the original composition and aspect ratio. Use daylight-balanced exposure, lifted shadows, clear midtone detail, luminous color, natural contrast, vibrant highlights, refined color grading, sharpness, depth, dynamic range, and overall visual polish. Keep blacks detailed rather than crushed. The final image should feel fresh, vivid, and clearly illuminated. Do not make it dark, moody, noir, low-key, shadow-heavy, muddy, or underexposed. Keep the scene faithful to the source image. Do not add text, captions, logos, typography, watermarks, or new objects.
 ```
 
 ## Tests
