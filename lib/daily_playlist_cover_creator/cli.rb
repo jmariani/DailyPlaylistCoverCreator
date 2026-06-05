@@ -76,6 +76,7 @@ module DailyPlaylistCoverCreator
       title = options[:title]
       source_file = options[:file]
       playlist = options[:playlist]
+      smoke = options[:smoke]
 
       unless source_folder || source_file
         if defaults["source_kind"] == "file" && present?(defaults["source_file"])
@@ -134,7 +135,7 @@ module DailyPlaylistCoverCreator
       memory_store = @memory_store_factory.call(destination_folder)
       memory_context = memory_store.context
       progress "Loaded GPT memories from: #{memory_store.path}"
-      copied_file = select_move_and_approve_image(source_folder, destination_folder, source_file)
+      copied_file = select_store_and_approve_image(source_folder, destination_folder, source_file, smoke:)
       enhanced_file, enhanced_title = enhance_and_name_image(copied_file, destination_folder, title, memory_context)
       open_enhanced_image(enhanced_file)
       landscape_file = create_landscape_version_if_needed(enhanced_file, destination_folder, memory_context)
@@ -168,7 +169,7 @@ module DailyPlaylistCoverCreator
         @stdout.puts "Spotify tracks not found: #{spotify_playlist.fetch(:missing).join(", ")}" unless spotify_playlist.fetch(:missing).empty?
       end
       @stdout.puts "Image enhancement prompt: #{IMAGE_ENHANCEMENT_PROMPT}"
-      @stdout.puts "Moved image: #{copied_file}"
+      @stdout.puts "#{smoke ? "Copied" : "Moved"} image: #{copied_file}"
       @stdout.puts "Enhanced image: #{enhanced_file}"
       @stdout.puts "16:9 image: #{landscape_file}" if landscape_file
       @stdout.puts "Album cover: #{album_cover_file}"
@@ -255,7 +256,7 @@ module DailyPlaylistCoverCreator
       result
     end
 
-    def select_move_and_approve_image(source_folder, destination_folder, source_file = nil)
+    def select_store_and_approve_image(source_folder, destination_folder, source_file = nil, smoke: false)
       loop do
         selected_file = source_file || select_random_image_file(source_folder)
         progress "Selected image file: #{File.expand_path(selected_file)}"
@@ -270,7 +271,7 @@ module DailyPlaylistCoverCreator
 
         if approved?(answer)
           progress "Source image approved."
-          return move_to_destination(selected_file, destination_folder)
+          return store_approved_image(selected_file, destination_folder, smoke:)
         end
 
         progress "Source image rejected; choosing another."
@@ -336,6 +337,22 @@ module DailyPlaylistCoverCreator
       progress "Moving image to: #{File.expand_path(destination_file)}"
       FileUtils.mv(source_file, destination_file)
       File.expand_path(destination_file)
+    end
+
+    def copy_to_destination(source_file, destination_folder)
+      destination_file = unique_destination_file(destination_folder, File.basename(source_file))
+      progress "Copying image to: #{File.expand_path(destination_file)}"
+      FileUtils.cp(source_file, destination_file)
+      File.expand_path(destination_file)
+    end
+
+    def store_approved_image(source_file, destination_folder, smoke:)
+      if smoke
+        progress "Smoke mode enabled; copying approved image instead of moving it."
+        copy_to_destination(source_file, destination_folder)
+      else
+        move_to_destination(source_file, destination_folder)
+      end
     end
 
     def enhance_and_name_image(copied_file, destination_folder, playlist_title, memory_context)
@@ -616,6 +633,10 @@ module DailyPlaylistCoverCreator
 
         opts.on("--spotify-login", "Authorize Spotify and save a refresh token") do
           options[:spotify_login] = true
+        end
+
+        opts.on("--smoke", "Copy the approved source image instead of moving it") do
+          options[:smoke] = true
         end
 
         opts.on("-f", "--file FILE", "Use this image file instead of selecting randomly") do |file|

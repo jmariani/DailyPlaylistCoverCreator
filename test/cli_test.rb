@@ -651,6 +651,23 @@ class CLITest < Minitest::Test
     end
   end
 
+  def test_smoke_mode_copies_approved_image_instead_of_moving_it
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_file = create_image_file(source_folder)
+
+        result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE, "--smoke"])
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "[progress] Smoke mode enabled; copying approved image instead of moving it."
+        assert_includes result[:stdout], "[progress] Copying image to:"
+        assert_includes result[:stdout], "Copied image: #{expected_destination_file(destination_folder, image_file)}"
+        assert File.exist?(image_file)
+        assert File.exist?(expected_destination_file(destination_folder, image_file))
+      end
+    end
+  end
+
   def test_uses_unique_filename_when_original_filename_already_exists
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|

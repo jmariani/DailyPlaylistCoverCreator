@@ -44,6 +44,8 @@ The moved image keeps its original filename. If that filename already exists in 
 
 After you approve the source image, the app moves it to the destination and enhances it with GPT using the prompt below. It saves the enhanced image using the original filename with `-enh`, such as `cover-enh.png`, and opens the enhanced image with the default application.
 
+For a dry-run style smoke check, pass `--smoke`. In smoke mode, the approved source image is copied to the destination instead of moved, so the original file remains in the source folder.
+
 Approved images are normalized to JPEG before GPT upload so unusual image encodings or color modes are less likely to be rejected by the image API.
 
 If the enhanced image is not landscape, the app also asks GPT to generate a 16:9 landscape version, saves it with `-16x9` in the filename, and opens it with the default application.
@@ -78,7 +80,7 @@ daily-playlist-cover-creator --spotify-login
 
 The login opens Spotify in your browser, asks for `playlist-modify-public`, receives the callback locally, and saves a refresh token in `~/.daily_playlist_cover_creator_spotify.json`. After that, `--playlist` refreshes Spotify access automatically. You can still set `SPOTIFY_ACCESS_TOKEN` manually to override OAuth for a single shell session.
 
-By default the app uses `gpt-image-1.5` for image enhancement and `gpt-5.2` for title suggestion. You can override those with `OPENAI_IMAGE_MODEL` and `OPENAI_TEXT_MODEL`.
+On each run, the app asks GPT for the latest available OpenAI Images API model and uses that model for image enhancement. If GPT cannot return a valid image model ID, the app falls back to `gpt-image-1.5`. You can override model selection with `OPENAI_IMAGE_MODEL`.
 
 The planned image enhancement prompt is:
 
