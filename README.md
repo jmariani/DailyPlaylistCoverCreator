@@ -85,7 +85,7 @@ On each run, the app asks GPT for the latest available OpenAI Images API model a
 The planned image enhancement prompt is:
 
 ```text
-Apply cinematic enhancements to this image while preserving the original aspect ratio. Improve lighting, contrast, color grading, depth, sharpness, and overall visual polish. Keep the image composition faithful to the original. Do not add any text, letters, captions, logos, watermarks, or typography.
+Enhance this image with a cinematic look while preserving the original composition and aspect ratio. Improve lighting, contrast, color grading, sharpness, depth, dynamic range, and overall visual polish. Keep the scene faithful to the source image. Do not add text, captions, logos, typography, watermarks, or new objects.
 ```
 
 ## Tests

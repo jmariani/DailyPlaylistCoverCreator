@@ -9,7 +9,7 @@ require_relative "spotify_client"
 module DailyPlaylistCoverCreator
   class CLI
     IMAGE_EXTENSIONS = %w[.jpg .jpeg .png .webp].freeze
-    IMAGE_ENHANCEMENT_PROMPT = "Apply cinematic enhancements to this image while preserving the original aspect ratio. Improve lighting, contrast, color grading, depth, sharpness, and overall visual polish. Keep the image composition faithful to the original. Do not add any text, letters, captions, logos, watermarks, or typography."
+    IMAGE_ENHANCEMENT_PROMPT = "Enhance this image with a cinematic look while preserving the original composition and aspect ratio. Improve lighting, contrast, color grading, sharpness, depth, dynamic range, and overall visual polish. Keep the scene faithful to the source image. Do not add text, captions, logos, typography, watermarks, or new objects."
     ALBUM_COVER_PROMPT_TEMPLATE = "Create a 1:1 album cover using this image as base. The title color is complementary to the background. Justify the title. The title is %title%"
 
     def self.run(
@@ -371,6 +371,11 @@ module DailyPlaylistCoverCreator
     end
 
     def normalize_for_gpt(image_file, destination_folder)
+      if image_file?(image_file)
+        progress "Using original image for GPT upload without JPEG normalization: #{File.expand_path(image_file)}"
+        return File.expand_path(image_file)
+      end
+
       normalized_file = unique_destination_file(
         destination_folder,
         "#{File.basename(image_file, ".*")}-normalized.jpg"

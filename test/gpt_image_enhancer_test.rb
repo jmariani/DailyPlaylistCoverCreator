@@ -27,6 +27,7 @@ class GptImageEnhancerTest < Minitest::Test
       assert_equal "cover.jpg", uploaded_image.filename
       assert_equal "image/jpeg", uploaded_image.content_type
       assert_equal "gpt-image-2", client.images.edits.first.fetch(:model)
+      assert_equal DailyPlaylistCoverCreator::GptImageEnhancer::DEFAULT_QUALITY, client.images.edits.first.fetch(:quality)
       assert_equal 1, resolver.calls
       assert_equal "enhanced image", File.read(output_file)
     end
@@ -71,6 +72,13 @@ class GptImageEnhancerTest < Minitest::Test
     assert_equal "gpt-image-2", resolver.latest_model
     assert_equal "gpt-5.2", client.responses.creates.first.fetch(:model)
     assert_includes client.responses.creates.first.fetch(:input), "latest available GPT Image model"
+  end
+
+  def test_model_resolver_accepts_chatgpt_image_latest
+    client = FakeModelClient.new("chatgpt-image-latest")
+    resolver = DailyPlaylistCoverCreator::GptImageModelResolver.new(api_key: "key", client_factory: ->(_api_key) { client })
+
+    assert_equal "chatgpt-image-latest", resolver.latest_model
   end
 
   def test_model_resolver_falls_back_when_gpt_answer_is_not_an_image_model

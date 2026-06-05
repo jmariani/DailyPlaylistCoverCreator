@@ -8,6 +8,7 @@ module DailyPlaylistCoverCreator
     LATEST_IMAGE_MODEL = "gpt-image-1.5"
     DEFAULT_MODEL = LATEST_IMAGE_MODEL
     DEFAULT_OUTPUT_FORMAT = :png
+    DEFAULT_QUALITY = :high
     SUPPORTED_CONTENT_TYPES = {
       ".jpg" => "image/jpeg",
       ".jpeg" => "image/jpeg",
@@ -33,6 +34,7 @@ module DailyPlaylistCoverCreator
         prompt: prompt,
         model: image_model,
         output_format: DEFAULT_OUTPUT_FORMAT,
+        quality: DEFAULT_QUALITY,
         size: size
       )
 
@@ -80,7 +82,7 @@ module DailyPlaylistCoverCreator
 
   class GptImageModelResolver
     DEFAULT_TEXT_MODEL = "gpt-5.2"
-    IMAGE_MODEL_PATTERN = /\Agpt-image-[a-z0-9.-]+\z/
+    IMAGE_MODEL_PATTERN = /\A(?:gpt-image-[a-z0-9.-]+|chatgpt-image-latest)\z/
 
     def initialize(api_key: ENV["OPENAI_API_KEY"], text_model: ENV.fetch("OPENAI_TEXT_MODEL", DEFAULT_TEXT_MODEL), fallback_model: GptImageEnhancer::LATEST_IMAGE_MODEL, client_factory: nil)
       @api_key = api_key
@@ -118,7 +120,7 @@ module DailyPlaylistCoverCreator
         Requirements:
         - Return only one model ID.
         - Do not include prose, markdown, quotes, or punctuation.
-        - The answer must start with gpt-image-.
+        - The answer must start with gpt-image- or be chatgpt-image-latest.
         - If uncertain, return #{GptImageEnhancer::LATEST_IMAGE_MODEL}.
       PROMPT
     end

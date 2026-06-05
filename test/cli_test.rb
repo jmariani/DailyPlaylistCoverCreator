@@ -400,8 +400,8 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Approve this source image? [y/N]:"
         assert_includes result[:stdout], "[progress] Source image approved."
         assert_includes result[:stdout], "[progress] Moving image to:"
-        assert_includes result[:stdout], "[progress] Normalizing image for GPT upload:"
         assert_includes result[:stdout], "[progress] Enhancing approved image with GPT."
+        assert_includes result[:stdout], "[progress] Using original image for GPT upload without JPEG normalization:"
         refute_includes result[:stdout], "[progress] Requesting GPT title for enhanced image."
         refute_includes result[:stdout], "[progress] GPT title received for enhanced image:"
         assert_includes result[:stdout], "[progress] Opening enhanced image with the default application."
@@ -427,7 +427,7 @@ class CLITest < Minitest::Test
     end
   end
 
-  def test_normalizes_approved_copy_before_gpt_enhancement
+  def test_uses_original_supported_image_for_gpt_enhancement
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         image_file = create_image_file(source_folder)
@@ -440,11 +440,11 @@ class CLITest < Minitest::Test
           image_normalizer:
         )
         copied_file = expected_destination_file(destination_folder, image_file)
-        normalized_file = File.join(expected_title_folder(destination_folder), "cover-normalized.jpg")
 
         assert_equal 0, result[:status]
-        assert_equal [{ image_file: copied_file, output_file: normalized_file }], image_normalizer.normalized_images
-        assert_equal normalized_file, image_enhancer.enhanced_images.first.fetch(:image_file)
+        assert_empty image_normalizer.normalized_images
+        assert_includes result[:stdout], "[progress] Using original image for GPT upload without JPEG normalization:"
+        assert_equal copied_file, image_enhancer.enhanced_images.first.fetch(:image_file)
       end
     end
   end
