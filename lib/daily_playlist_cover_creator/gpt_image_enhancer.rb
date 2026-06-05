@@ -16,7 +16,7 @@ module DailyPlaylistCoverCreator
 
     def initialize(api_key: ENV["OPENAI_API_KEY"], model: ENV.fetch("OPENAI_IMAGE_MODEL", DEFAULT_MODEL), client_factory: nil)
       @api_key = api_key
-      @model = model
+      @model = model.to_s.empty? ? DEFAULT_MODEL : model
       @client_factory = client_factory
     end
 

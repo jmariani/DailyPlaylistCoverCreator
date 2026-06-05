@@ -20,7 +20,22 @@ class GptImageEnhancerTest < Minitest::Test
       uploaded_image = client.images.edits.first.fetch(:image)
       assert_equal "cover.jpg", uploaded_image.filename
       assert_equal "image/jpeg", uploaded_image.content_type
+      assert_equal DailyPlaylistCoverCreator::GptImageEnhancer::DEFAULT_MODEL, client.images.edits.first.fetch(:model)
       assert_equal "enhanced image", File.read(output_file)
+    end
+  end
+
+  def test_blank_model_uses_default_model
+    Dir.mktmpdir do |folder|
+      image_file = File.join(folder, "cover.jpg")
+      output_file = File.join(folder, "enhanced.png")
+      File.write(image_file, "image data")
+      client = FakeClient.new
+      enhancer = DailyPlaylistCoverCreator::GptImageEnhancer.new(api_key: "key", model: "", client_factory: ->(_api_key) { client })
+
+      enhancer.enhance(image_file:, output_file:, prompt: "enhance")
+
+      assert_equal DailyPlaylistCoverCreator::GptImageEnhancer::DEFAULT_MODEL, client.images.edits.first.fetch(:model)
     end
   end
 
