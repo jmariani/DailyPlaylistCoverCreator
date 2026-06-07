@@ -22,7 +22,6 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Source folder: #{source_folder}"
         assert_includes result[:stdout], "Destination folder: #{destination_folder}"
         assert_includes result[:stdout], "Title: #{TITLE}"
-        assert_includes result[:stdout], "Image enhancement prompt: #{DailyPlaylistCoverCreator::CLI::IMAGE_ENHANCEMENT_PROMPT}"
         assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
         assert File.exist?(expected_destination_file(destination_folder, image_file))
         refute File.exist?(image_file)
@@ -42,7 +41,6 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Destination folder: #{destination_folder}"
         assert_includes result[:stdout], "Source folder: #{source_folder}"
         assert_includes result[:stdout], "Title: #{TITLE}"
-        assert_includes result[:stdout], "Image enhancement prompt: #{DailyPlaylistCoverCreator::CLI::IMAGE_ENHANCEMENT_PROMPT}"
         assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
         assert File.exist?(expected_destination_file(destination_folder, image_file))
         assert_empty result[:stderr]
@@ -61,7 +59,6 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Source folder: #{source_folder}"
         assert_includes result[:stdout], "Destination folder: #{destination_folder}"
         assert_includes result[:stdout], "Title: #{TITLE}"
-        assert_includes result[:stdout], "Image enhancement prompt: #{DailyPlaylistCoverCreator::CLI::IMAGE_ENHANCEMENT_PROMPT}"
         assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
         assert File.exist?(expected_destination_file(destination_folder, image_file))
         assert_empty result[:stderr]
@@ -178,7 +175,6 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Source folder: #{source_folder}"
         assert_includes result[:stdout], "Destination folder: #{destination_folder}"
         assert_includes result[:stdout], "Title: #{TITLE}"
-        assert_includes result[:stdout], "Image enhancement prompt: #{DailyPlaylistCoverCreator::CLI::IMAGE_ENHANCEMENT_PROMPT}"
         assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
         assert File.exist?(expected_destination_file(destination_folder, image_file))
         assert_empty result[:stderr]
@@ -196,7 +192,6 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Source folder: #{source_folder}"
         assert_includes result[:stdout], "Destination folder: #{destination_folder}"
         assert_includes result[:stdout], "Title: #{TITLE}"
-        assert_includes result[:stdout], "Image enhancement prompt: #{DailyPlaylistCoverCreator::CLI::IMAGE_ENHANCEMENT_PROMPT}"
         assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
         assert File.exist?(expected_destination_file(destination_folder, image_file))
         assert_empty result[:stderr]
@@ -400,56 +395,53 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Approve this source image? [y/N]:"
         assert_includes result[:stdout], "[progress] Source image approved."
         assert_includes result[:stdout], "[progress] Moving image to:"
-        assert_includes result[:stdout], "[progress] Enhancing approved image with GPT."
-        assert_includes result[:stdout], "[progress] Using original image for GPT upload without JPEG normalization:"
+        assert_includes result[:stdout], "[progress] Skipping enhancement step; using approved original image as cover base."
         refute_includes result[:stdout], "[progress] Requesting GPT title for enhanced image."
         refute_includes result[:stdout], "[progress] GPT title received for enhanced image:"
-        assert_includes result[:stdout], "[progress] Opening enhanced image with the default application."
         assert_includes result[:stdout], "[progress] Generating 1:1 album cover with GPT."
         assert_includes result[:stdout], "[progress] Opening album cover image with the default application."
       end
     end
   end
 
-  def test_enhances_approved_image_and_names_it_with_title_parameter
+  def test_skips_enhancement_step
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         image_file = create_image_file(source_folder)
 
         result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE])
-        enhanced_file = expected_enhanced_file(destination_folder)
 
         assert_equal 0, result[:status]
         assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
-        assert_includes result[:stdout], "Enhanced image: #{enhanced_file}"
-        assert_equal "enhanced image", File.read(enhanced_file)
+        assert_includes result[:stdout], "[progress] Skipping enhancement step; using approved original image as cover base."
+        refute_includes result[:stdout], "Enhanced image:"
+        refute File.exist?(expected_enhanced_file(destination_folder))
       end
     end
   end
 
-  def test_uses_original_supported_image_for_gpt_enhancement
+  def test_uses_original_landscape_image_for_album_cover
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         image_file = create_image_file(source_folder)
         image_enhancer = FakeImageEnhancer.new
-        image_normalizer = FakeImageNormalizer.new
 
         result = run_cli(
           ["-s", source_folder, "-d", destination_folder, "-t", TITLE],
           image_enhancer:,
-          image_normalizer:
+          image_inspector: FakeImageInspector.new(width: 1200, height: 800)
         )
         copied_file = expected_destination_file(destination_folder, image_file)
 
         assert_equal 0, result[:status]
-        assert_empty image_normalizer.normalized_images
-        assert_includes result[:stdout], "[progress] Using original image for GPT upload without JPEG normalization:"
+        assert_includes result[:stdout], "[progress] Base image is landscape; no 16:9 version needed."
+        assert_equal 1, image_enhancer.enhanced_images.length
         assert_equal copied_file, image_enhancer.enhanced_images.first.fetch(:image_file)
       end
     end
   end
 
-  def test_generates_album_cover_from_enhanced_image_when_no_16x9_version_exists
+  def test_generates_album_cover_from_original_image_when_no_16x9_version_exists
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         create_image_file(source_folder)
@@ -462,12 +454,12 @@ class CLITest < Minitest::Test
           image_opener:,
           image_inspector: FakeImageInspector.new(width: 1200, height: 800)
         )
-        enhanced_file = expected_enhanced_file(destination_folder)
+        original_file = expected_destination_file(destination_folder, File.join(source_folder, "cover.jpg"))
         album_cover_file = File.join(expected_title_folder(destination_folder), "morning-focus.png")
 
         assert_equal 0, result[:status]
         assert_includes result[:stdout], "Album cover: #{album_cover_file}"
-        assert_equal enhanced_file, image_enhancer.enhanced_images.last.fetch(:image_file)
+        assert_equal original_file, image_enhancer.enhanced_images.last.fetch(:image_file)
         assert_equal album_cover_file, image_enhancer.enhanced_images.last.fetch(:output_file)
         assert_equal "1024x1024", image_enhancer.enhanced_images.last.fetch(:size)
         assert_equal DailyPlaylistCoverCreator::CLI::ALBUM_COVER_PROMPT_TEMPLATE.gsub("%title%", TITLE), image_enhancer.enhanced_images.last.fetch(:prompt)
@@ -477,22 +469,7 @@ class CLITest < Minitest::Test
     end
   end
 
-  def test_opens_enhanced_image_after_creating_it
-    Dir.mktmpdir do |source_folder|
-      Dir.mktmpdir do |destination_folder|
-        create_image_file(source_folder)
-        image_opener = FakeImageOpener.new
-
-        result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE], image_opener:)
-        enhanced_file = expected_enhanced_file(destination_folder)
-
-        assert_equal 0, result[:status]
-        assert_includes image_opener.opened_paths, enhanced_file
-      end
-    end
-  end
-
-  def test_does_not_generate_16x9_version_when_enhanced_image_is_landscape
+  def test_does_not_generate_16x9_version_when_original_image_is_landscape
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         create_image_file(source_folder)
@@ -505,14 +482,14 @@ class CLITest < Minitest::Test
         )
 
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "[progress] Enhanced image is landscape; no 16:9 version needed."
-        assert_equal 2, image_enhancer.enhanced_images.length
+        assert_includes result[:stdout], "[progress] Base image is landscape; no 16:9 version needed."
+        assert_equal 1, image_enhancer.enhanced_images.length
         refute_includes result[:stdout], "16:9 image:"
       end
     end
   end
 
-  def test_generates_and_opens_16x9_version_when_enhanced_image_is_not_landscape
+  def test_generates_and_opens_16x9_version_when_original_image_is_not_landscape
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         create_image_file(source_folder)
@@ -525,22 +502,22 @@ class CLITest < Minitest::Test
           image_enhancer:,
           image_inspector: FakeImageInspector.new(width: 800, height: 1200)
         )
-        landscape_file = File.join(expected_title_folder(destination_folder), "cover-enh-16x9.png")
+        landscape_file = File.join(expected_title_folder(destination_folder), "cover-16x9.png")
 
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "[progress] Enhanced image is not landscape; generating 16:9 version with GPT."
+        assert_includes result[:stdout], "[progress] Base image is not landscape; generating 16:9 version with GPT."
         assert_includes result[:stdout], "[progress] Opening 16:9 image with the default application."
         assert_includes result[:stdout], "16:9 image: #{landscape_file}"
-        assert_equal 3, image_enhancer.enhanced_images.length
-        assert_equal :auto, image_enhancer.enhanced_images[1].fetch(:size)
-        assert_includes image_enhancer.enhanced_images[1].fetch(:prompt), "Generate a 16:9 landscape version."
+        assert_equal 2, image_enhancer.enhanced_images.length
+        assert_equal :auto, image_enhancer.enhanced_images.first.fetch(:size)
+        assert_includes image_enhancer.enhanced_images.first.fetch(:prompt), "Create a bright, well-lit 16:9 landscape version"
         assert_includes image_opener.opened_paths, landscape_file
         assert_equal "enhanced image", File.read(landscape_file)
       end
     end
   end
 
-  def test_generates_album_cover_from_16x9_version_when_present
+  def test_generates_album_cover_from_original_image_even_when_16x9_version_exists
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         create_image_file(source_folder)
@@ -551,13 +528,15 @@ class CLITest < Minitest::Test
           image_enhancer:,
           image_inspector: FakeImageInspector.new(width: 800, height: 1200)
         )
-        landscape_file = File.join(expected_title_folder(destination_folder), "cover-enh-16x9.png")
+        landscape_file = File.join(expected_title_folder(destination_folder), "cover-16x9.png")
+        original_file = expected_destination_file(destination_folder, File.join(source_folder, "cover.jpg"))
         album_cover_file = File.join(expected_title_folder(destination_folder), "morning-focus.png")
 
         assert_equal 0, result[:status]
+        assert_includes result[:stdout], "16:9 image: #{landscape_file}"
         assert_includes result[:stdout], "Album cover: #{album_cover_file}"
-        assert_equal 3, image_enhancer.enhanced_images.length
-        assert_equal landscape_file, image_enhancer.enhanced_images.last.fetch(:image_file)
+        assert_equal 2, image_enhancer.enhanced_images.length
+        assert_equal original_file, image_enhancer.enhanced_images.last.fetch(:image_file)
       end
     end
   end
@@ -568,19 +547,6 @@ class CLITest < Minitest::Test
       File.binwrite(image_file, png_header(width: 640, height: 480))
 
       assert_equal [640, 480], DailyPlaylistCoverCreator::CLI::ImageInspector.new.dimensions(image_file)
-    end
-  end
-
-  def test_sips_image_normalizer_writes_jpeg_output
-    Dir.mktmpdir do |folder|
-      image_file = File.join(folder, "image.png")
-      output_file = File.join(folder, "normalized.jpg")
-      File.binwrite(image_file, tiny_png)
-
-      DailyPlaylistCoverCreator::CLI::SipsImageNormalizer.new.normalize(image_file:, output_file:)
-
-      assert File.exist?(output_file)
-      assert_equal "\xFF\xD8".b, File.binread(output_file, 2)
     end
   end
 
@@ -596,7 +562,7 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "[progress] Source image rejected; choosing another."
         assert_includes result[:stdout], "[progress] Source image approved."
         assert_equal 2, result[:stdout].scan("Approve this source image? [y/N]:").length
-        assert_equal 4, image_opener.opened_paths.length
+        assert_equal 3, image_opener.opened_paths.length
         assert_equal source_folder, File.dirname(image_opener.opened_paths.first)
         assert image_opener.opened_paths.any? { |path| path.start_with?(expected_title_folder(destination_folder)) }
       end
@@ -814,7 +780,6 @@ class CLITest < Minitest::Test
     image_opener: FakeImageOpener.new,
     image_enhancer: FakeImageEnhancer.new,
     image_inspector: FakeImageInspector.new(width: 1200, height: 800),
-    image_normalizer: FakeImageNormalizer.new,
     notifier: FakeNotifier.new,
     spotify_auth: FakeSpotifyAuth.new,
     spotify_client: FakeSpotifyClient.new,
@@ -832,7 +797,6 @@ class CLITest < Minitest::Test
       image_opener:,
       image_enhancer:,
       image_inspector:,
-      image_normalizer:,
       notifier:,
       spotify_auth:,
       spotify_client:,
@@ -871,20 +835,6 @@ class CLITest < Minitest::Test
     def enhance(image_file:, output_file:, prompt:, size: :auto)
       @enhanced_images << { image_file:, output_file:, prompt:, size: }
       File.write(output_file, "enhanced image")
-      output_file
-    end
-  end
-
-  class FakeImageNormalizer
-    attr_reader :normalized_images
-
-    def initialize
-      @normalized_images = []
-    end
-
-    def normalize(image_file:, output_file:)
-      @normalized_images << { image_file:, output_file: }
-      File.write(output_file, "normalized image")
       output_file
     end
   end

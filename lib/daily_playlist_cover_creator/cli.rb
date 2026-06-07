@@ -9,7 +9,6 @@ require_relative "spotify_client"
 module DailyPlaylistCoverCreator
   class CLI
     IMAGE_EXTENSIONS = %w[.jpg .jpeg .png .webp].freeze
-    IMAGE_ENHANCEMENT_PROMPT = "Enhance this image with a bright, well-lit, high-end editorial look while preserving the original composition and aspect ratio. Use daylight-balanced exposure, lifted shadows, clear midtone detail, luminous color, natural contrast, vibrant highlights, refined color grading, sharpness, depth, dynamic range, and overall visual polish. Keep blacks detailed rather than crushed. The final image should feel fresh, vivid, and clearly illuminated. Do not make it dark, moody, noir, low-key, shadow-heavy, muddy, or underexposed. Keep the scene faithful to the source image. Do not add text, captions, logos, typography, watermarks, or new objects."
     ALBUM_COVER_PROMPT_TEMPLATE = "Create a finished 1:1 album cover using this image as the visual base. Make it feel like bright, polished, professional cover art, not a simple crop. Preserve the core subject and mood, but improve the square composition with daylight-balanced exposure, lifted shadows, clear midtone detail, luminous color, natural contrast, depth, crisp detail, vibrant highlights, and tasteful graphic design. Keep blacks detailed rather than crushed. The cover should feel fresh, vivid, readable, and clearly illuminated. Do not make it dark, moody, noir, low-key, shadow-heavy, muddy, or underexposed. Add the title as clean, legible, justified typography. Choose a typeface style that relates to the image subject, atmosphere, era, genre, and mood. Choose a title color that is complementary to the background and has strong readable contrast. Do not add any text other than the title. The title is %title%"
 
     def self.run(
@@ -20,7 +19,6 @@ module DailyPlaylistCoverCreator
       image_opener: SystemImageOpener.new,
       image_enhancer: GptImageEnhancer.new,
       image_inspector: ImageInspector.new,
-      image_normalizer: SipsImageNormalizer.new,
       notifier: SystemNotifier.new,
       spotify_auth: nil,
       spotify_client: nil,
@@ -36,7 +34,6 @@ module DailyPlaylistCoverCreator
         image_opener:,
         image_enhancer:,
         image_inspector:,
-        image_normalizer:,
         notifier:,
         spotify_auth:,
         spotify_client:,
@@ -45,14 +42,13 @@ module DailyPlaylistCoverCreator
       ).run(argv)
     end
 
-    def initialize(stdin:, stdout:, stderr:, image_opener:, image_enhancer:, image_inspector:, image_normalizer:, notifier:, spotify_auth:, spotify_client:, defaults_store:, memory_store_factory:)
+    def initialize(stdin:, stdout:, stderr:, image_opener:, image_enhancer:, image_inspector:, notifier:, spotify_auth:, spotify_client:, defaults_store:, memory_store_factory:)
       @stdin = stdin
       @stdout = stdout
       @stderr = stderr
       @image_opener = image_opener
       @image_enhancer = image_enhancer
       @image_inspector = image_inspector
-      @image_normalizer = image_normalizer
       @notifier = notifier
       @spotify_auth = spotify_auth
       @spotify_client = spotify_client
@@ -136,15 +132,14 @@ module DailyPlaylistCoverCreator
       memory_context = memory_store.context
       progress "Loaded GPT memories from: #{memory_store.path}"
       copied_file = select_store_and_approve_image(source_folder, destination_folder, source_file, smoke:)
-      enhanced_file, enhanced_title = enhance_and_name_image(copied_file, destination_folder, title, memory_context)
-      open_enhanced_image(enhanced_file)
-      landscape_file = create_landscape_version_if_needed(enhanced_file, destination_folder, memory_context)
-      album_cover_file = create_album_cover(landscape_file || enhanced_file, destination_folder, title, memory_context)
+      progress "Skipping enhancement step; using approved original image as cover base."
+      landscape_file = create_landscape_version_if_needed(copied_file, destination_folder, memory_context)
+      album_cover_file = create_album_cover(copied_file, destination_folder, title, memory_context)
       memory_store.remember(
         playlist_title: title,
-        enhanced_title: enhanced_title,
+        enhanced_title: title,
         copied_file: copied_file,
-        enhanced_file: enhanced_file,
+        enhanced_file: nil,
         landscape_file: landscape_file,
         album_cover_file: album_cover_file
       )
@@ -168,9 +163,7 @@ module DailyPlaylistCoverCreator
         @stdout.puts "Spotify tracks added: #{spotify_playlist.fetch(:added)}/#{spotify_playlist.fetch(:total)}"
         @stdout.puts "Spotify tracks not found: #{spotify_playlist.fetch(:missing).join(", ")}" unless spotify_playlist.fetch(:missing).empty?
       end
-      @stdout.puts "Image enhancement prompt: #{IMAGE_ENHANCEMENT_PROMPT}"
       @stdout.puts "#{smoke ? "Copied" : "Moved"} image: #{copied_file}"
-      @stdout.puts "Enhanced image: #{enhanced_file}"
       @stdout.puts "16:9 image: #{landscape_file}" if landscape_file
       @stdout.puts "Album cover: #{album_cover_file}"
       0
@@ -355,54 +348,24 @@ module DailyPlaylistCoverCreator
       end
     end
 
-    def enhance_and_name_image(copied_file, destination_folder, playlist_title, memory_context)
-      progress "Enhancing approved image with GPT."
-      normalized_file = normalize_for_gpt(copied_file, destination_folder)
-      temporary_enhanced_file = unique_destination_file(destination_folder, "enhanced.png")
-      @image_enhancer.enhance(
-        image_file: normalized_file,
-        output_file: temporary_enhanced_file,
-        prompt: prompt_with_memories(IMAGE_ENHANCEMENT_PROMPT, memory_context)
-      )
-
-      enhanced_file = unique_destination_file(destination_folder, "#{File.basename(copied_file, ".*")}-enh.png")
-      FileUtils.mv(temporary_enhanced_file, enhanced_file)
-      [File.expand_path(enhanced_file), playlist_title]
-    end
-
-    def normalize_for_gpt(image_file, destination_folder)
-      if image_file?(image_file)
-        progress "Using original image for GPT upload without JPEG normalization: #{File.expand_path(image_file)}"
-        return File.expand_path(image_file)
-      end
-
-      normalized_file = unique_destination_file(
-        destination_folder,
-        "#{File.basename(image_file, ".*")}-normalized.jpg"
-      )
-      progress "Normalizing image for GPT upload: #{File.expand_path(normalized_file)}"
-      @image_normalizer.normalize(image_file:, output_file: normalized_file)
-      File.expand_path(normalized_file)
-    end
-
-    def create_landscape_version_if_needed(enhanced_file, destination_folder, memory_context)
-      width, height = @image_inspector.dimensions(enhanced_file)
-      progress "Enhanced image dimensions: #{width}x#{height}"
+    def create_landscape_version_if_needed(base_image_file, destination_folder, memory_context)
+      width, height = @image_inspector.dimensions(base_image_file)
+      progress "Base image dimensions: #{width}x#{height}"
 
       if width > height
-        progress "Enhanced image is landscape; no 16:9 version needed."
+        progress "Base image is landscape; no 16:9 version needed."
         return nil
       end
 
-      progress "Enhanced image is not landscape; generating 16:9 version with GPT."
+      progress "Base image is not landscape; generating 16:9 version with GPT."
       landscape_file = unique_destination_file(
         destination_folder,
-        "#{File.basename(enhanced_file, ".*")}-16x9.png"
+        "#{File.basename(base_image_file, ".*")}-16x9.png"
       )
       @image_enhancer.enhance(
-        image_file: enhanced_file,
+        image_file: base_image_file,
         output_file: landscape_file,
-        prompt: prompt_with_memories("#{IMAGE_ENHANCEMENT_PROMPT} Generate a 16:9 landscape version.", memory_context),
+        prompt: prompt_with_memories("Create a bright, well-lit 16:9 landscape version using this image as the visual base. Preserve the core subject, mood, and recognizable details while extending or reframing the composition naturally for a 16:9 layout. Use daylight-balanced exposure, lifted shadows, clear midtone detail, luminous color, natural contrast, and vibrant highlights. Do not make it dark, moody, noir, low-key, shadow-heavy, muddy, or underexposed. Do not add text, captions, logos, typography, watermarks, or new objects.", memory_context),
         size: :auto
       )
       landscape_file = File.expand_path(landscape_file)
@@ -448,10 +411,6 @@ module DailyPlaylistCoverCreator
 
     def approved?(answer)
       %w[y yes].include?(answer.strip.downcase)
-    end
-
-    def open_enhanced_image(enhanced_file)
-      open_image(enhanced_file, label: "enhanced")
     end
 
     def open_landscape_image(landscape_file)
@@ -515,19 +474,20 @@ module DailyPlaylistCoverCreator
           if header&.start_with?("\x89PNG\r\n\x1A\n".b)
             return header.byteslice(16, 8).unpack("N2")
           end
-
-          raise "Unsupported enhanced image format for dimension check: #{path}"
         end
+
+        sips_dimensions(path)
       end
-    end
 
-    class SipsImageNormalizer
-      def normalize(image_file:, output_file:)
-        unless system("sips", "-s", "format", "jpeg", image_file, "--out", output_file, out: File::NULL, err: File::NULL)
-          raise "Could not normalize image for GPT upload: #{image_file}"
-        end
+      private
 
-        output_file
+      def sips_dimensions(path)
+        output = IO.popen(["sips", "-g", "pixelWidth", "-g", "pixelHeight", path], err: File::NULL, &:read)
+        width = output[/pixelWidth:\s*(\d+)/, 1]
+        height = output[/pixelHeight:\s*(\d+)/, 1]
+        return [width.to_i, height.to_i] if width && height
+
+        raise "Unsupported image format for dimension check: #{path}"
       end
     end
 
