@@ -9,15 +9,16 @@ GEM
       base64
       cgi
       connection_pool
+    sqlite3 (2.9.5-arm64-darwin)
     webrick (1.9.2)
 
 PLATFORMS
   arm64-darwin-25
-  ruby
 
 DEPENDENCIES
   minitest (~> 5.25)
   openai (~> 0.64.0)
+  sqlite3 (~> 2.9)
   webrick (~> 1.9)
 
 CHECKSUMS
@@ -26,6 +27,7 @@ CHECKSUMS
   connection_pool (3.0.2) sha256=33fff5ba71a12d2aa26cb72b1db8bba2a1a01823559fb01d29eb74c286e62e0a
   minitest (5.27.0) sha256=2d3b17f8a36fe7801c1adcffdbc38233b938eb0b4966e97a6739055a45fa77d5
   openai (0.64.0) sha256=1d54769d056c33aa148790036f4b4a2034a1fcc2e29100d5171e85d267f77df8
+  sqlite3 (2.9.5-arm64-darwin) sha256=d0cf444a70fc9395d513cfbcc1e6719e224aa645314e3824cb0474c721425aa2
   webrick (1.9.2) sha256=beb4a15fc474defed24a3bda4ffd88a490d517c9e4e6118c3edce59e45864131
 
 BUNDLED WITH

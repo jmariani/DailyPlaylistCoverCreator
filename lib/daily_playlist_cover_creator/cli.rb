@@ -4,12 +4,97 @@ require "optparse"
 require "fileutils"
 require "json"
 require_relative "gpt_image_enhancer"
+require_relative "image_url_database"
 require_relative "spotify_client"
 
 module DailyPlaylistCoverCreator
   class CLI
     IMAGE_EXTENSIONS = %w[.jpg .jpeg .png .webp].freeze
-    ALBUM_COVER_PROMPT_TEMPLATE = "Create a finished 1:1 album cover using this image as the visual base. Make it feel like bright, polished, professional cover art, not a simple crop. Preserve the core subject and mood, but improve the square composition with daylight-balanced exposure, lifted shadows, clear midtone detail, luminous color, natural contrast, depth, crisp detail, vibrant highlights, and tasteful graphic design. Keep blacks detailed rather than crushed. The cover should feel fresh, vivid, readable, and clearly illuminated. Do not make it dark, moody, noir, low-key, shadow-heavy, muddy, or underexposed. Add the title as clean, legible, justified typography. Choose a typeface style that relates to the image subject, atmosphere, era, genre, and mood. Choose a title color that is complementary to the background and has strong readable contrast. Do not add any text other than the title. The title is %title%"
+    LANDSCAPE_PROMPT = <<~PROMPT.strip
+      Enhance the provided image while preserving the original composition, subject placement, artistic style, visual identity, and aspect ratio.
+
+      Create a bright cinematic version with premium-quality detail, balanced contrast, open shadows, rich midtones, clean highlights, enhanced color separation, refined texture detail, and natural dynamic range.
+
+      Increase clarity, depth, sharpness, and visual impact while maintaining a luminous appearance. Preserve detail in both highlights and shadows. Avoid crushed blacks, excessive contrast, heavy vignettes, dark cinematic grading, muddy shadows, or loss of detail.
+
+      Preserve all original elements, colors, shapes, linework, textures, and design motifs. Maintain the original artistic intent and overall mood while improving image quality, readability, depth, and polish.
+
+      Apply subtle atmospheric depth, professional color grading, enhanced micro-contrast, improved edge definition, and gallery-quality rendering.
+
+      For illustrations and artwork:
+
+      * Preserve the original illustration style.
+      * Preserve the original color palette and visual language.
+      * Enhance line quality, texture fidelity, and print quality.
+      * Do not introduce photorealistic elements unless present in the source.
+
+      For photographs:
+
+      * Improve lighting, color balance, local contrast, texture detail, and depth.
+      * Maintain a natural appearance.
+      * Preserve skin tones and realistic materials.
+
+      Do not:
+
+      * Add new subjects.
+      * Remove existing subjects.
+      * Add text, captions, logos, signatures, watermarks, borders, or typography.
+      * Change the composition.
+      * Change the artistic style.
+      * Crop important content.
+      * Darken the image.
+      * Replace the original artwork with a different interpretation.
+
+      Output a high-resolution, professionally enhanced image that remains faithful to the source while appearing significantly cleaner, sharper, richer, brighter, and more cinematic.
+      Expand the canvas to a 16:9 widescreen composition while preserving the original image as the central focal point.
+      Extend the background, environment, patterns, textures, waves, sky, landscape, or surrounding design elements naturally beyond the original borders. Maintain visual continuity and stylistic consistency.
+      Do not crop the original artwork. Do not stretch the image. Do not distort the subject. Generate seamless content that feels like a natural continuation of the original scene.
+    PROMPT
+    ALBUM_COVER_PROMPT_TEMPLATE = <<~PROMPT.strip
+      Create a professional album cover using the provided image as the base artwork.
+
+      Preserve the original subject matter, composition, mood, perspective, and artistic style. Enhance image quality while maintaining visual fidelity to the source.
+
+      Transform the image into a polished album-cover design with:
+
+      * Enhanced contrast and clarity
+      * Improved sharpness and texture detail
+      * Cinematic lighting and depth
+      * Rich color separation and dynamic range
+      * Refined highlights and shadow detail
+      * Premium print-quality finish
+      * Subtle atmospheric depth where appropriate
+      * Clean, professional visual hierarchy
+
+      Typography:
+
+      * Remove all existing text, logos, signatures, watermarks, labels, captions, speech bubbles, stickers, and typography from the original image.
+      * Add only the album title:
+      "[TITLE]"
+      * Use a title color complementary to the dominant background colors.
+      * Ensure maximum readability and visual balance.
+      * Use elegant, modern typography appropriate to the image style.
+      * Justify and align the title cleanly within the composition.
+      * Keep the title relatively small and understated.
+      * Integrate the title naturally into the artwork rather than placing it as a separate overlay.
+      * Do not add artist names, subtitles, credits, parental advisory labels, or any additional text.
+
+      Composition:
+
+      * Maintain a clean album-cover aesthetic.
+      * Preserve all important visual elements from the source image.
+      * Avoid adding new subjects unless necessary for composition.
+      * Keep the design visually balanced.
+      * No borders or frames unless naturally suited to the artwork.
+
+      Output:
+
+      * Album-cover quality.
+      * High resolution.
+      * Professional music-release artwork.
+      * Square 1:1 format.
+      * Only the album title should appear in the final image.
+    PROMPT
 
     def self.run(
       argv,
@@ -23,7 +108,8 @@ module DailyPlaylistCoverCreator
       spotify_auth: nil,
       spotify_client: nil,
       defaults_store: DefaultsStore.new,
-      memory_store_factory: ->(_destination_folder) { MemoryStore.new }
+      memory_store_factory: ->(_destination_folder) { MemoryStore.new },
+      image_url_database_factory: ->(path) { ImageUrlDatabase.new(path) }
     )
       spotify_auth ||= SpotifyAuth.new(stdout: stdout)
       spotify_client ||= SpotifyClient.new(token_provider: spotify_auth)
@@ -38,11 +124,12 @@ module DailyPlaylistCoverCreator
         spotify_auth:,
         spotify_client:,
         defaults_store:,
-        memory_store_factory:
+        memory_store_factory:,
+        image_url_database_factory:
       ).run(argv)
     end
 
-    def initialize(stdin:, stdout:, stderr:, image_opener:, image_enhancer:, image_inspector:, notifier:, spotify_auth:, spotify_client:, defaults_store:, memory_store_factory:)
+    def initialize(stdin:, stdout:, stderr:, image_opener:, image_enhancer:, image_inspector:, notifier:, spotify_auth:, spotify_client:, defaults_store:, memory_store_factory:, image_url_database_factory:)
       @stdin = stdin
       @stdout = stdout
       @stderr = stderr
@@ -54,6 +141,7 @@ module DailyPlaylistCoverCreator
       @spotify_client = spotify_client
       @defaults_store = defaults_store
       @memory_store_factory = memory_store_factory
+      @image_url_database_factory = image_url_database_factory
     end
 
     def run(argv)
@@ -73,6 +161,7 @@ module DailyPlaylistCoverCreator
       source_file = options[:file]
       playlist = options[:playlist]
       smoke = options[:smoke]
+      database = options[:database]
 
       unless source_folder || source_file
         if defaults["source_kind"] == "file" && present?(defaults["source_file"])
@@ -115,6 +204,11 @@ module DailyPlaylistCoverCreator
         return 1
       end
 
+      if database && !File.file?(database)
+        @stderr.puts "Database file does not exist or is not a file: #{database}"
+        return 1
+      end
+
       if playlist && !File.file?(playlist)
         @stderr.puts "Playlist file does not exist or is not a file: #{playlist}"
         return 1
@@ -128,32 +222,33 @@ module DailyPlaylistCoverCreator
       spotify_playlist = import_spotify_playlist(playlist)
       destination_root = destination_folder
       destination_folder = prepare_work_destination_folder(destination_folder, title)
-      memory_store = @memory_store_factory.call(destination_folder)
-      memory_context = memory_store.context
-      progress "Loaded GPT memories from: #{memory_store.path}"
-      copied_file = select_store_and_approve_image(source_folder, destination_folder, source_file, smoke:)
-      progress "Skipping enhancement step; using approved original image as cover base."
-      landscape_file = create_landscape_version_if_needed(copied_file, destination_folder, memory_context)
-      album_cover_file = create_album_cover(copied_file, destination_folder, title, memory_context)
-      memory_store.remember(
-        playlist_title: title,
-        enhanced_title: title,
-        copied_file: copied_file,
-        enhanced_file: nil,
-        landscape_file: landscape_file,
-        album_cover_file: album_cover_file
-      )
-      progress "Saved GPT memories to: #{memory_store.path}"
+      copied_file = select_store_and_approve_image(source_folder, destination_folder, source_file, database, smoke:)
+      progress "16:9 and cover creation stages are disabled; stopping after selected image is stored."
+      # memory_store = @memory_store_factory.call(destination_folder)
+      # memory_context = memory_store.context
+      # progress "Loaded GPT memories from: #{memory_store.path}"
+      # landscape_file = create_landscape_version_if_needed(copied_file, destination_folder, memory_context)
+      # album_cover_file = create_album_cover(copied_file, destination_folder, title, memory_context)
+      # memory_store.remember(
+      #   playlist_title: title,
+      #   enhanced_title: title,
+      #   copied_file: copied_file,
+      #   enhanced_file: nil,
+      #   landscape_file: landscape_file,
+      #   album_cover_file: album_cover_file
+      # )
+      # progress "Saved GPT memories to: #{memory_store.path}"
       remember_defaults(
         source_folder: source_folder,
         source_file: source_file,
         destination_folder: destination_root,
         title: title
       )
-      notify_finished(title, album_cover_file)
+      notify_finished(title, copied_file)
 
       @stdout.puts "Source folder: #{File.expand_path(source_folder)}" if source_folder
       @stdout.puts "Source file: #{File.expand_path(source_file)}" if source_file
+      @stdout.puts "Database: #{File.expand_path(database)}" if database
       @stdout.puts "Destination folder: #{File.expand_path(destination_folder)}"
       @stdout.puts "Title: #{title}"
       @stdout.puts "Playlist file: #{File.expand_path(playlist)}" if playlist
@@ -164,8 +259,8 @@ module DailyPlaylistCoverCreator
         @stdout.puts "Spotify tracks not found: #{spotify_playlist.fetch(:missing).join(", ")}" unless spotify_playlist.fetch(:missing).empty?
       end
       @stdout.puts "#{smoke ? "Copied" : "Moved"} image: #{copied_file}"
-      @stdout.puts "16:9 image: #{landscape_file}" if landscape_file
-      @stdout.puts "Album cover: #{album_cover_file}"
+      # @stdout.puts "16:9 image: #{landscape_file}" if landscape_file
+      # @stdout.puts "Album cover: #{album_cover_file}"
       0
     rescue OptionParser::ParseError => e
       @stderr.puts e.message
@@ -189,8 +284,12 @@ module DailyPlaylistCoverCreator
 
     def parse(argv)
       options = {}
-      parser(options).parse!(argv)
+      parser(options).parse!(normalize_database_option(argv))
       options
+    end
+
+    def normalize_database_option(argv)
+      argv.map { |argument| %w[-db -database].include?(argument) ? "--database" : argument }
     end
 
     def prompt_for_source_folder(default_value = nil)
@@ -249,9 +348,9 @@ module DailyPlaylistCoverCreator
       result
     end
 
-    def select_store_and_approve_image(source_folder, destination_folder, source_file = nil, smoke: false)
+    def select_store_and_approve_image(source_folder, destination_folder, source_file = nil, database = nil, smoke: false)
       loop do
-        selected_file = source_file || select_random_image_file(source_folder)
+        selected_file = source_file || select_image_file(source_folder, database)
         progress "Selected image file: #{File.expand_path(selected_file)}"
         @stdout.puts "Source image ready for approval: #{File.expand_path(selected_file)}"
         open_image(selected_file, label: "source")
@@ -270,6 +369,37 @@ module DailyPlaylistCoverCreator
         progress "Source image rejected; choosing another."
         raise ImageApprovalRequiredError, "Provided source file was rejected." if source_file
       end
+    end
+
+    def select_image_file(source_folder, database)
+      return select_random_image_file(source_folder) unless database
+
+      select_random_database_image_file(source_folder, database)
+    end
+
+    def select_random_database_image_file(source_folder, database)
+      progress "Selecting random image from database: #{File.expand_path(database)}"
+      found_record = false
+
+      @image_url_database_factory.call(database).each_random_image_name do |image_name|
+        found_record = true
+        image_file = database_image_file_path(source_folder, image_name)
+        progress "Random database image selected: #{image_name}"
+        progress "Built source path from database image name: #{File.expand_path(image_file)}"
+        return image_file if image_file?(image_file)
+
+        progress "Database image file was not found or is not supported; selecting another record."
+      end
+
+      unless found_record
+        raise EmptySourceFolderError, "No image names found in database table image_urls: #{database}"
+      end
+
+      raise EmptySourceFolderError, "No database image records resolved to an existing supported image file: #{database}"
+    end
+
+    def database_image_file_path(source_folder, image_name)
+      File.join(source_folder, image_name[0, 2].to_s, image_name[2, 2].to_s, image_name)
     end
 
     def select_random_image_file(folder)
@@ -365,7 +495,7 @@ module DailyPlaylistCoverCreator
       @image_enhancer.enhance(
         image_file: base_image_file,
         output_file: landscape_file,
-        prompt: prompt_with_memories("Create a bright, well-lit 16:9 landscape version using this image as the visual base. Preserve the core subject, mood, and recognizable details while extending or reframing the composition naturally for a 16:9 layout. Use daylight-balanced exposure, lifted shadows, clear midtone detail, luminous color, natural contrast, and vibrant highlights. Do not make it dark, moody, noir, low-key, shadow-heavy, muddy, or underexposed. Do not add text, captions, logos, typography, watermarks, or new objects.", memory_context),
+        prompt: prompt_with_memories(LANDSCAPE_PROMPT, memory_context),
         size: :auto
       )
       landscape_file = File.expand_path(landscape_file)
@@ -429,7 +559,7 @@ module DailyPlaylistCoverCreator
     end
 
     def album_cover_prompt(title)
-      ALBUM_COVER_PROMPT_TEMPLATE.gsub("%title%", title)
+      ALBUM_COVER_PROMPT_TEMPLATE.gsub("[TITLE]", title)
     end
 
     def notify_finished(title, album_cover_file)
@@ -594,6 +724,10 @@ module DailyPlaylistCoverCreator
 
         opts.on("-p", "--playlist FILE", "Playlist text file to import into Spotify") do |playlist|
           options[:playlist] = playlist
+        end
+
+        opts.on("--database PATH", "SQLite database with image_urls.image_name records") do |path|
+          options[:database] = path
         end
 
         opts.on("--spotify-login", "Authorize Spotify and save a refresh token") do

@@ -24,6 +24,8 @@ daily-playlist-cover-creator -s /path/to/source/folder -d /path/to/destination/f
 
 The optional `--playlist` or `-p` parameter accepts a playlist text file. When present, the app connects to Spotify, creates a public Spotify playlist using the playlist file name, searches for each nonblank line as a song query, and adds each found track to the new playlist.
 
+The optional `--database` or `-db` parameter accepts a SQLite database file. When present, the app selects a random row from the `image_urls` table and reads the `image_name` column. It builds the source image path from the source folder, the first two characters of the image name as the first subfolder, the second two characters as the next subfolder, and then the full image name.
+
 To use a specific source image instead of random selection, pass `--file` or `-f`:
 
 ```sh
@@ -42,17 +44,13 @@ Supported image extensions are `.jpg`, `.jpeg`, `.png`, and `.webp`.
 
 The moved image keeps its original filename. If that filename already exists in the destination folder, the app appends a counter such as `cover-2.jpg`.
 
-After you approve the source image, the app moves it to the destination and uses that approved original as the cover base. The enhancement step is skipped.
+After you approve the source image, the app moves it to the destination. The 16:9 generation and 1:1 cover creation stages are currently disabled, so the process stops after the selected image is stored.
 
 For a dry-run style smoke check, pass `--smoke`. In smoke mode, the approved source image is copied to the destination instead of moved, so the original file remains in the source folder.
 
-If the approved original image is not landscape, the app asks GPT to generate a 16:9 landscape version, saves it with `-16x9` in the filename, and opens it with the default application.
-
-Finally, the app uses the approved original image to generate a 1:1 album cover. The cover prompt asks for polished professional cover art with stronger composition, cinematic color, contrast, depth, and legible justified title typography related to the image subject and mood. It saves the generated cover with the title as the filename and opens it with the default application.
-
 When the process completes successfully, the app raises a macOS notification.
 
-The GPT steps use global memories stored in `~/.daily_playlist_cover_creator_memories.json`. Each successful run remembers recent playlist titles, enhanced titles, and generated files, then includes that context in future GPT image and title prompts.
+The GPT steps are currently commented out in the run flow. When enabled, they use global memories stored in `~/.daily_playlist_cover_creator_memories.json`.
 
 Set `OPENAI_API_KEY` before running the app:
 

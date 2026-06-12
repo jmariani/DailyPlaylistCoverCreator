@@ -3,6 +3,7 @@
 require "minitest/autorun"
 require "base64"
 require "json"
+require "sqlite3"
 require "stringio"
 require "tmpdir"
 
@@ -216,6 +217,81 @@ class CLITest < Minitest::Test
     end
   end
 
+  def test_uses_database_parameter_to_select_source_file
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_name = "aabb-cover.jpg"
+        first_folder = File.join(source_folder, "aa")
+        second_folder = File.join(first_folder, "bb")
+        FileUtils.mkdir_p(second_folder)
+        image_file = create_image_file(second_folder, image_name)
+        database_file = create_image_url_database(destination_folder, [image_name])
+
+        result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE, "-db", database_file])
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "[progress] Selecting random image from database: #{database_file}"
+        assert_includes result[:stdout], "[progress] Random database image selected: #{image_name}"
+        assert_includes result[:stdout], "[progress] Built source path from database image name: #{image_file}"
+        assert_includes result[:stdout], "Database: #{database_file}"
+        assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
+        assert File.exist?(expected_destination_file(destination_folder, image_file))
+      end
+    end
+  end
+
+  def test_rejects_missing_database_file
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        create_image_file(source_folder)
+
+        result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE, "-db", File.join(destination_folder, "missing.sqlite3")])
+
+        assert_equal 1, result[:status]
+        assert_includes result[:stderr], "Database file does not exist or is not a file"
+      end
+    end
+  end
+
+  def test_selects_another_database_record_when_built_source_file_is_missing
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        missing_image_name = "ccdd-missing.jpg"
+        existing_image_name = "eeff-cover.jpg"
+        second_folder = File.join(source_folder, "ee", "ff")
+        FileUtils.mkdir_p(second_folder)
+        image_file = create_image_file(second_folder, existing_image_name)
+        database_file = create_image_url_database(destination_folder, [missing_image_name, existing_image_name])
+
+        result = run_cli(
+          ["-s", source_folder, "-d", destination_folder, "-t", TITLE, "-db", database_file],
+          image_url_database_factory: ->(_path) { FakeImageUrlDatabase.new([missing_image_name, existing_image_name]) }
+        )
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "[progress] Built source path from database image name: #{File.join(source_folder, "cc", "dd", missing_image_name)}"
+        assert_includes result[:stdout], "[progress] Database image file was not found or is not supported; selecting another record."
+        assert_includes result[:stdout], "[progress] Built source path from database image name: #{image_file}"
+        assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
+      end
+    end
+  end
+
+  def test_rejects_database_selection_when_no_records_resolve_to_existing_files
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_name = "ccdd-missing.jpg"
+        database_file = create_image_url_database(destination_folder, [image_name])
+
+        result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE, "-db", database_file])
+
+        assert_equal 1, result[:status]
+        assert_includes result[:stdout], "[progress] Database image file was not found or is not supported; selecting another record."
+        assert_includes result[:stderr], "No database image records resolved to an existing supported image file"
+      end
+    end
+  end
+
   def test_imports_playlist_file_to_spotify
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
@@ -395,16 +471,16 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "Approve this source image? [y/N]:"
         assert_includes result[:stdout], "[progress] Source image approved."
         assert_includes result[:stdout], "[progress] Moving image to:"
-        assert_includes result[:stdout], "[progress] Skipping enhancement step; using approved original image as cover base."
+        assert_includes result[:stdout], "[progress] 16:9 and cover creation stages are disabled; stopping after selected image is stored."
         refute_includes result[:stdout], "[progress] Requesting GPT title for enhanced image."
         refute_includes result[:stdout], "[progress] GPT title received for enhanced image:"
-        assert_includes result[:stdout], "[progress] Generating 1:1 album cover with GPT."
-        assert_includes result[:stdout], "[progress] Opening album cover image with the default application."
+        refute_includes result[:stdout], "[progress] Generating 1:1 album cover with GPT."
+        refute_includes result[:stdout], "[progress] Opening album cover image with the default application."
       end
     end
   end
 
-  def test_skips_enhancement_step
+  def test_stops_after_selected_image_is_stored
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         image_file = create_image_file(source_folder)
@@ -413,14 +489,16 @@ class CLITest < Minitest::Test
 
         assert_equal 0, result[:status]
         assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
-        assert_includes result[:stdout], "[progress] Skipping enhancement step; using approved original image as cover base."
+        assert_includes result[:stdout], "[progress] 16:9 and cover creation stages are disabled; stopping after selected image is stored."
         refute_includes result[:stdout], "Enhanced image:"
+        refute_includes result[:stdout], "16:9 image:"
+        refute_includes result[:stdout], "Album cover:"
         refute File.exist?(expected_enhanced_file(destination_folder))
       end
     end
   end
 
-  def test_uses_original_landscape_image_for_album_cover
+  def test_does_not_call_image_enhancer_after_selection
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         image_file = create_image_file(source_folder)
@@ -434,14 +512,13 @@ class CLITest < Minitest::Test
         copied_file = expected_destination_file(destination_folder, image_file)
 
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "[progress] Base image is landscape; no 16:9 version needed."
-        assert_equal 1, image_enhancer.enhanced_images.length
-        assert_equal copied_file, image_enhancer.enhanced_images.first.fetch(:image_file)
+        assert_includes result[:stdout], "Moved image: #{copied_file}"
+        assert_empty image_enhancer.enhanced_images
       end
     end
   end
 
-  def test_generates_album_cover_from_original_image_when_no_16x9_version_exists
+  def test_does_not_generate_album_cover
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         create_image_file(source_folder)
@@ -454,22 +531,18 @@ class CLITest < Minitest::Test
           image_opener:,
           image_inspector: FakeImageInspector.new(width: 1200, height: 800)
         )
-        original_file = expected_destination_file(destination_folder, File.join(source_folder, "cover.jpg"))
         album_cover_file = File.join(expected_title_folder(destination_folder), "morning-focus.png")
 
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "Album cover: #{album_cover_file}"
-        assert_equal original_file, image_enhancer.enhanced_images.last.fetch(:image_file)
-        assert_equal album_cover_file, image_enhancer.enhanced_images.last.fetch(:output_file)
-        assert_equal "1024x1024", image_enhancer.enhanced_images.last.fetch(:size)
-        assert_equal DailyPlaylistCoverCreator::CLI::ALBUM_COVER_PROMPT_TEMPLATE.gsub("%title%", TITLE), image_enhancer.enhanced_images.last.fetch(:prompt)
-        assert_equal album_cover_file, image_opener.opened_paths.last
-        assert_equal "enhanced image", File.read(album_cover_file)
+        refute_includes result[:stdout], "Album cover: #{album_cover_file}"
+        assert_empty image_enhancer.enhanced_images
+        refute File.exist?(album_cover_file)
+        refute_equal album_cover_file, image_opener.opened_paths.last
       end
     end
   end
 
-  def test_does_not_generate_16x9_version_when_original_image_is_landscape
+  def test_does_not_check_landscape_when_stages_are_disabled
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         create_image_file(source_folder)
@@ -482,14 +555,14 @@ class CLITest < Minitest::Test
         )
 
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "[progress] Base image is landscape; no 16:9 version needed."
-        assert_equal 1, image_enhancer.enhanced_images.length
+        refute_includes result[:stdout], "[progress] Base image is landscape; no 16:9 version needed."
+        assert_empty image_enhancer.enhanced_images
         refute_includes result[:stdout], "16:9 image:"
       end
     end
   end
 
-  def test_generates_and_opens_16x9_version_when_original_image_is_not_landscape
+  def test_does_not_generate_or_open_16x9_version_when_stages_are_disabled
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         create_image_file(source_folder)
@@ -505,19 +578,17 @@ class CLITest < Minitest::Test
         landscape_file = File.join(expected_title_folder(destination_folder), "cover-16x9.png")
 
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "[progress] Base image is not landscape; generating 16:9 version with GPT."
-        assert_includes result[:stdout], "[progress] Opening 16:9 image with the default application."
-        assert_includes result[:stdout], "16:9 image: #{landscape_file}"
-        assert_equal 2, image_enhancer.enhanced_images.length
-        assert_equal :auto, image_enhancer.enhanced_images.first.fetch(:size)
-        assert_includes image_enhancer.enhanced_images.first.fetch(:prompt), "Create a bright, well-lit 16:9 landscape version"
-        assert_includes image_opener.opened_paths, landscape_file
-        assert_equal "enhanced image", File.read(landscape_file)
+        refute_includes result[:stdout], "[progress] Base image is not landscape; generating 16:9 version with GPT."
+        refute_includes result[:stdout], "[progress] Opening 16:9 image with the default application."
+        refute_includes result[:stdout], "16:9 image: #{landscape_file}"
+        assert_empty image_enhancer.enhanced_images
+        refute_includes image_opener.opened_paths, landscape_file
+        refute File.exist?(landscape_file)
       end
     end
   end
 
-  def test_generates_album_cover_from_original_image_even_when_16x9_version_exists
+  def test_does_not_generate_album_cover_when_16x9_stage_is_disabled
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         create_image_file(source_folder)
@@ -528,15 +599,12 @@ class CLITest < Minitest::Test
           image_enhancer:,
           image_inspector: FakeImageInspector.new(width: 800, height: 1200)
         )
-        landscape_file = File.join(expected_title_folder(destination_folder), "cover-16x9.png")
-        original_file = expected_destination_file(destination_folder, File.join(source_folder, "cover.jpg"))
         album_cover_file = File.join(expected_title_folder(destination_folder), "morning-focus.png")
 
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "16:9 image: #{landscape_file}"
-        assert_includes result[:stdout], "Album cover: #{album_cover_file}"
-        assert_equal 2, image_enhancer.enhanced_images.length
-        assert_equal original_file, image_enhancer.enhanced_images.last.fetch(:image_file)
+        refute_includes result[:stdout], "Album cover: #{album_cover_file}"
+        assert_empty image_enhancer.enhanced_images
+        refute File.exist?(album_cover_file)
       end
     end
   end
@@ -562,9 +630,9 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "[progress] Source image rejected; choosing another."
         assert_includes result[:stdout], "[progress] Source image approved."
         assert_equal 2, result[:stdout].scan("Approve this source image? [y/N]:").length
-        assert_equal 3, image_opener.opened_paths.length
+        assert_equal 2, image_opener.opened_paths.length
         assert_equal source_folder, File.dirname(image_opener.opened_paths.first)
-        assert image_opener.opened_paths.any? { |path| path.start_with?(expected_title_folder(destination_folder)) }
+        assert image_opener.opened_paths.all? { |path| File.dirname(path) == source_folder }
       end
     end
   end
@@ -664,7 +732,7 @@ class CLITest < Minitest::Test
     end
   end
 
-  def test_gpt_steps_include_memory_context
+  def test_gpt_steps_are_disabled
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         create_image_file(source_folder)
@@ -687,15 +755,13 @@ class CLITest < Minitest::Test
         )
 
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "[progress] Loaded GPT memories from:"
-        assert_includes image_enhancer.enhanced_images.first.fetch(:prompt), "Memory context from previous successful runs"
-        assert_includes image_enhancer.enhanced_images.first.fetch(:prompt), "Yesterday"
-        assert_includes image_enhancer.enhanced_images.first.fetch(:prompt), "Golden Hour"
+        refute_includes result[:stdout], "[progress] Loaded GPT memories from:"
+        assert_empty image_enhancer.enhanced_images
       end
     end
   end
 
-  def test_successful_run_saves_memory
+  def test_successful_run_does_not_save_gpt_memory_while_stages_are_disabled
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
         create_image_file(source_folder)
@@ -707,14 +773,9 @@ class CLITest < Minitest::Test
           ["-s", source_folder, "-d", destination_folder, "-t", TITLE],
           memory_store_factory: ->(_destination_folder) { memory_store }
         )
-        memory = JSON.parse(File.read(memory_file))
-
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "[progress] Saved GPT memories to:"
-        refute File.exist?(File.join(expected_title_folder(destination_folder), DailyPlaylistCoverCreator::CLI::MemoryStore::FILE_NAME))
-        assert_equal TITLE, memory.fetch("runs").last.fetch("playlist_title")
-        assert_equal TITLE, memory.fetch("runs").last.fetch("enhanced_title")
-        assert_equal "morning-focus.png", File.basename(memory.fetch("runs").last.fetch("album_cover_file"))
+        refute_includes result[:stdout], "[progress] Saved GPT memories to:"
+        refute File.exist?(memory_file)
       end
     end
   end
@@ -738,7 +799,7 @@ class CLITest < Minitest::Test
         assert_equal 1, notifier.notifications.length
         assert_equal "Daily Playlist Cover Creator", notifier.notifications.first.fetch(:title)
         assert_includes notifier.notifications.first.fetch(:message), "Finished #{TITLE}"
-        assert_includes notifier.notifications.first.fetch(:message), "morning-focus.png"
+        assert_includes notifier.notifications.first.fetch(:message), "cover.jpg"
       end
     end
   end
@@ -749,6 +810,18 @@ class CLITest < Minitest::Test
     path = File.join(folder, name)
     File.write(path, "image data")
     path
+  end
+
+  def create_image_url_database(folder, image_names)
+    database_file = File.join(folder, "image-urls.sqlite3")
+    database = SQLite3::Database.new(database_file)
+    database.execute("CREATE TABLE image_urls (image_name TEXT NOT NULL)")
+    image_names.each do |image_name|
+      database.execute("INSERT INTO image_urls (image_name) VALUES (?)", [image_name])
+    end
+    database_file
+  ensure
+    database&.close
   end
 
   def expected_destination_file(destination_folder, image_file)
@@ -784,7 +857,8 @@ class CLITest < Minitest::Test
     spotify_auth: FakeSpotifyAuth.new,
     spotify_client: FakeSpotifyClient.new,
     defaults_store: FakeDefaultsStore.new,
-    memory_store_factory: ->(destination_folder) { DailyPlaylistCoverCreator::CLI::MemoryStore.new(File.join(destination_folder, "test-memories.json")) }
+    memory_store_factory: ->(destination_folder) { DailyPlaylistCoverCreator::CLI::MemoryStore.new(File.join(destination_folder, "test-memories.json")) },
+    image_url_database_factory: ->(path) { DailyPlaylistCoverCreator::ImageUrlDatabase.new(path) }
   )
     stdin = StringIO.new(stdin)
     stdout = StringIO.new
@@ -801,7 +875,8 @@ class CLITest < Minitest::Test
       spotify_auth:,
       spotify_client:,
       defaults_store:,
-      memory_store_factory:
+      memory_store_factory:,
+      image_url_database_factory:
     )
 
     {
@@ -887,6 +962,20 @@ class CLITest < Minitest::Test
     def login
       @logins += 1
       "spotify-access-token"
+    end
+  end
+
+  class FakeImageUrlDatabase
+    def initialize(image_names)
+      @image_names = image_names
+    end
+
+    def each_random_image_name
+      return enum_for(:each_random_image_name) unless block_given?
+
+      @image_names.each do |image_name|
+        yield image_name
+      end
     end
   end
 
