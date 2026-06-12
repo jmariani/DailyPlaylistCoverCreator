@@ -240,6 +240,26 @@ class CLITest < Minitest::Test
     end
   end
 
+  def test_normalizes_database_image_name_before_building_source_path
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_name = "23 - Nrj6iMR.jpg"
+        database_image_name = "  nested\\#{image_name}\n"
+        second_folder = File.join(source_folder, "23", "_-")
+        FileUtils.mkdir_p(second_folder)
+        image_file = create_image_file(second_folder, image_name)
+        database_file = create_image_url_database(destination_folder, [database_image_name])
+
+        result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE, "-db", database_file])
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "[progress] Random database image selected: #{database_image_name}"
+        assert_includes result[:stdout], "[progress] Built source path from database image name: #{image_file}"
+        assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
+      end
+    end
+  end
+
   def test_rejects_missing_database_file
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|

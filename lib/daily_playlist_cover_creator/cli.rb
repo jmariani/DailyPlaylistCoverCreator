@@ -399,7 +399,26 @@ module DailyPlaylistCoverCreator
     end
 
     def database_image_file_path(source_folder, image_name)
-      File.join(source_folder, image_name[0, 2].to_s, image_name[2, 2].to_s, image_name)
+      normalized_image_name = normalize_database_image_name(image_name)
+      normalized_path_name = normalize_database_path_name(normalized_image_name)
+      File.expand_path(
+        File.join(
+          source_folder,
+          normalized_path_name[0, 2].to_s,
+          normalized_path_name[2, 2].to_s,
+          normalized_image_name
+        )
+      )
+    end
+
+    def normalize_database_image_name(image_name)
+      normalized = File.basename(image_name.to_s.strip.delete("\0").tr("\\", "/"))
+      normalized = normalized.unicode_normalize(:nfc) if normalized.respond_to?(:unicode_normalize)
+      normalized
+    end
+
+    def normalize_database_path_name(image_name)
+      image_name.gsub(/\s+/, "_")
     end
 
     def select_random_image_file(folder)
