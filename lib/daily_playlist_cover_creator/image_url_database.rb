@@ -4,6 +4,8 @@ require "sqlite3"
 
 module DailyPlaylistCoverCreator
   class ImageUrlDatabase
+    MAX_RANDOM_ATTEMPTS = 2_000
+
     def initialize(path)
       @path = path
     end
@@ -12,16 +14,20 @@ module DailyPlaylistCoverCreator
       return enum_for(:each_random_image_name) unless block_given?
 
       database = SQLite3::Database.new(@path, readonly: true)
-      total = database.get_first_value("SELECT COUNT(*) FROM image_urls").to_i
-      tried_offsets = {}
+      max_rowid = database.get_first_value("SELECT MAX(rowid) FROM image_urls").to_i
+      return if max_rowid.zero?
 
-      while tried_offsets.length < total
-        offset = rand(total)
-        next if tried_offsets.key?(offset)
+      yielded_rowids = {}
+      attempts = 0
 
-        tried_offsets[offset] = true
-        image_name = image_name_at_offset(database, offset)
-        yield image_name if image_name
+      while attempts < MAX_RANDOM_ATTEMPTS
+        attempts += 1
+        row = image_row_at_or_after_random_rowid(database, max_rowid)
+        next unless row
+        next if yielded_rowids.key?(row.fetch(:rowid))
+
+        yielded_rowids[row.fetch(:rowid)] = true
+        yield row.fetch(:image_name)
       end
     ensure
       database&.close
@@ -29,10 +35,27 @@ module DailyPlaylistCoverCreator
 
     private
 
-    def image_name_at_offset(database, offset)
-      statement = database.prepare("SELECT image_name FROM image_urls LIMIT 1 OFFSET ?")
-      cursor = statement.execute(offset)
-      cursor.next&.first
+    def image_row_at_or_after_random_rowid(database, max_rowid)
+      target_rowid = rand(1..max_rowid)
+      row = image_row_at_or_after_rowid(database, target_rowid)
+      row || first_image_row(database)
+    end
+
+    def image_row_at_or_after_rowid(database, rowid)
+      fetch_image_row(database, "SELECT rowid, image_name FROM image_urls WHERE rowid >= ? ORDER BY rowid LIMIT 1", rowid)
+    end
+
+    def first_image_row(database)
+      fetch_image_row(database, "SELECT rowid, image_name FROM image_urls ORDER BY rowid LIMIT 1")
+    end
+
+    def fetch_image_row(database, sql, *binds)
+      statement = database.prepare(sql)
+      cursor = statement.execute(*binds)
+      row = cursor.next
+      return nil unless row
+
+      { rowid: row[0], image_name: row[1] }
     ensure
       cursor&.close
     end
