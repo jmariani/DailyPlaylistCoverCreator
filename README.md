@@ -40,7 +40,7 @@ It selects a random image by choosing a random item from the source folder. If t
 
 After an image is selected, the app opens the original source image with the default application and asks you to approve it. Enter `y` or `yes` to continue. Any other answer starts another random selection. The image is moved to the destination only after you approve it.
 
-Supported image extensions are `.jpg`, `.jpeg`, `.png`, and `.webp`.
+Supported image extensions are `.gif`, `.jpg`, `.jpeg`, `.png`, and `.webp`.
 
 The moved image keeps its original filename. If that filename already exists in the destination folder, the app appends a counter such as `cover-2.jpg`.
 

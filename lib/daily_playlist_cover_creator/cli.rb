@@ -9,7 +9,7 @@ require_relative "spotify_client"
 
 module DailyPlaylistCoverCreator
   class CLI
-    IMAGE_EXTENSIONS = %w[.jpg .jpeg .png .webp].freeze
+    IMAGE_EXTENSIONS = %w[.gif .jpg .jpeg .png .webp].freeze
     LANDSCAPE_PROMPT = <<~PROMPT.strip
       Enhance the provided image while preserving the original composition, subject placement, artistic style, visual identity, and aspect ratio.
 
@@ -272,6 +272,10 @@ module DailyPlaylistCoverCreator
     rescue ImageApprovalRequiredError => e
       @stderr.puts e.message
       1
+    rescue QuitRequested
+      progress "Quit requested during image approval."
+      @stdout.puts "Quitting."
+      0
     rescue StandardError => e
       @stderr.puts e.message
       1
@@ -281,6 +285,7 @@ module DailyPlaylistCoverCreator
 
     EmptySourceFolderError = Class.new(StandardError)
     ImageApprovalRequiredError = Class.new(StandardError)
+    QuitRequested = Class.new(StandardError)
 
     def parse(argv)
       options = {}
@@ -354,12 +359,14 @@ module DailyPlaylistCoverCreator
         progress "Selected image file: #{File.expand_path(selected_file)}"
         @stdout.puts "Source image ready for approval: #{File.expand_path(selected_file)}"
         open_image(selected_file, label: "source")
-        @stdout.print "Approve this source image? [y/N]: "
+        @stdout.print "Approve this source image? [y/N/q]: "
 
         answer = @stdin.gets
         if answer.nil?
           raise ImageApprovalRequiredError, "Image approval is required."
         end
+
+        raise QuitRequested if quit_requested?(answer)
 
         if approved?(answer)
           progress "Source image approved."
@@ -560,6 +567,10 @@ module DailyPlaylistCoverCreator
 
     def approved?(answer)
       %w[y yes].include?(answer.strip.downcase)
+    end
+
+    def quit_requested?(answer)
+      answer.strip.downcase == "q"
     end
 
     def open_landscape_image(landscape_file)

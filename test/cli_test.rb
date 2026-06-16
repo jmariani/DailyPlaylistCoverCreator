@@ -217,6 +217,21 @@ class CLITest < Minitest::Test
     end
   end
 
+  def test_accepts_gif_as_source_file
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_file = create_image_file(source_folder, "chosen.gif")
+
+        result = run_cli(["-f", image_file, "-d", destination_folder, "-t", TITLE])
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "Source file: #{image_file}"
+        assert_includes result[:stdout], "Moved image: #{File.join(expected_title_folder(destination_folder), "chosen.gif")}"
+        assert File.exist?(File.join(expected_title_folder(destination_folder), "chosen.gif"))
+      end
+    end
+  end
+
   def test_uses_database_parameter_to_select_source_file
     Dir.mktmpdir do |source_folder|
       Dir.mktmpdir do |destination_folder|
@@ -453,7 +468,33 @@ class CLITest < Minitest::Test
 
         assert_equal 1, result[:status]
         assert_includes result[:stderr], "Provided source file was rejected."
-        assert_equal 1, result[:stdout].scan("Approve this source image? [y/N]:").length
+        assert_equal 1, result[:stdout].scan("Approve this source image? [y/N/q]:").length
+      end
+    end
+  end
+
+  def test_quits_when_q_is_entered_at_image_approval
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_file = create_image_file(source_folder, "chosen.jpg")
+        defaults_store = FakeDefaultsStore.new
+        notifier = FakeNotifier.new
+
+        result = run_cli(
+          ["-s", source_folder, "-d", destination_folder, "-t", TITLE],
+          stdin: "q\n",
+          defaults_store:,
+          notifier:
+        )
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "Approve this source image? [y/N/q]:"
+        assert_includes result[:stdout], "[progress] Quit requested during image approval."
+        assert_includes result[:stdout], "Quitting."
+        assert File.exist?(image_file)
+        refute File.exist?(expected_destination_file(destination_folder, image_file))
+        assert_nil defaults_store.saved
+        assert_empty notifier.notifications
       end
     end
   end
@@ -488,7 +529,7 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "[progress] Selected image file:"
         assert_includes result[:stdout], "[progress] Moving image to:"
         assert_includes result[:stdout], "[progress] Opening source image with the default application."
-        assert_includes result[:stdout], "Approve this source image? [y/N]:"
+        assert_includes result[:stdout], "Approve this source image? [y/N/q]:"
         assert_includes result[:stdout], "[progress] Source image approved."
         assert_includes result[:stdout], "[progress] Moving image to:"
         assert_includes result[:stdout], "[progress] 16:9 and cover creation stages are disabled; stopping after selected image is stored."
@@ -649,7 +690,7 @@ class CLITest < Minitest::Test
         assert_equal 0, result[:status]
         assert_includes result[:stdout], "[progress] Source image rejected; choosing another."
         assert_includes result[:stdout], "[progress] Source image approved."
-        assert_equal 2, result[:stdout].scan("Approve this source image? [y/N]:").length
+        assert_equal 2, result[:stdout].scan("Approve this source image? [y/N/q]:").length
         assert_equal 2, image_opener.opened_paths.length
         assert_equal source_folder, File.dirname(image_opener.opened_paths.first)
         assert image_opener.opened_paths.all? { |path| File.dirname(path) == source_folder }
@@ -681,7 +722,7 @@ class CLITest < Minitest::Test
         result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE], stdin: "")
 
         assert_equal 1, result[:status]
-        assert_includes result[:stdout], "Approve this source image? [y/N]:"
+        assert_includes result[:stdout], "Approve this source image? [y/N/q]:"
         assert_includes result[:stderr], "Image approval is required."
       end
     end
