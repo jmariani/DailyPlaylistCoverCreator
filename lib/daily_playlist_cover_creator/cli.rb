@@ -276,6 +276,9 @@ module DailyPlaylistCoverCreator
       progress "Quit requested during image approval."
       @stdout.puts "Quitting."
       0
+    rescue SourceFileDeleted
+      @stdout.puts "Deleted source image. Quitting."
+      0
     rescue StandardError => e
       @stderr.puts e.message
       1
@@ -286,6 +289,7 @@ module DailyPlaylistCoverCreator
     EmptySourceFolderError = Class.new(StandardError)
     ImageApprovalRequiredError = Class.new(StandardError)
     QuitRequested = Class.new(StandardError)
+    SourceFileDeleted = Class.new(StandardError)
 
     def parse(argv)
       options = {}
@@ -355,11 +359,11 @@ module DailyPlaylistCoverCreator
 
     def select_store_and_approve_image(source_folder, destination_folder, source_file = nil, database = nil, smoke: false)
       loop do
-        selected_file = source_file || select_image_file(source_folder, database)
+        selected_file, database_image_name = select_image_candidate(source_folder, source_file, database)
         progress "Selected image file: #{File.expand_path(selected_file)}"
         @stdout.puts "Source image ready for approval: #{File.expand_path(selected_file)}"
         open_image(selected_file, label: "source")
-        @stdout.print "Approve this source image? [y/N/q]: "
+        @stdout.print "Approve this source image? [y/N/q/d]: "
 
         answer = @stdin.gets
         if answer.nil?
@@ -368,9 +372,19 @@ module DailyPlaylistCoverCreator
 
         raise QuitRequested if quit_requested?(answer)
 
+        if delete_requested?(answer)
+          delete_source_image(selected_file)
+          delete_database_image_record(database, database_image_name) if database_image_name
+          raise SourceFileDeleted if source_file
+
+          next
+        end
+
         if approved?(answer)
           progress "Source image approved."
-          return store_approved_image(selected_file, destination_folder, smoke:)
+          stored_file = store_approved_image(selected_file, destination_folder, smoke:)
+          delete_database_image_record(database, database_image_name) if database_image_name
+          return stored_file
         end
 
         progress "Source image rejected; choosing another."
@@ -378,13 +392,20 @@ module DailyPlaylistCoverCreator
       end
     end
 
+    def select_image_candidate(source_folder, source_file, database)
+      return [source_file, nil] if source_file
+      return select_database_image_candidate(source_folder, database) if database
+
+      [select_random_image_file(source_folder), nil]
+    end
+
     def select_image_file(source_folder, database)
       return select_random_image_file(source_folder) unless database
 
-      select_random_database_image_file(source_folder, database)
+      select_database_image_candidate(source_folder, database).first
     end
 
-    def select_random_database_image_file(source_folder, database)
+    def select_database_image_candidate(source_folder, database)
       progress "Selecting random image from database: #{File.expand_path(database)}"
       found_record = false
 
@@ -393,7 +414,7 @@ module DailyPlaylistCoverCreator
         image_file = database_image_file_path(source_folder, image_name)
         progress "Random database image selected: #{image_name}"
         progress "Built source path from database image name: #{File.expand_path(image_file)}"
-        return image_file if image_file?(image_file)
+        return [image_file, image_name] if image_file?(image_file)
 
         progress "Database image file was not found or is not supported; selecting another record."
       end
@@ -571,6 +592,20 @@ module DailyPlaylistCoverCreator
 
     def quit_requested?(answer)
       answer.strip.downcase == "q"
+    end
+
+    def delete_requested?(answer)
+      answer.strip.downcase == "d"
+    end
+
+    def delete_source_image(source_file)
+      progress "Deleting source image: #{File.expand_path(source_file)}"
+      FileUtils.rm_f(source_file)
+    end
+
+    def delete_database_image_record(database, image_name)
+      progress "Deleting database image record: #{image_name}"
+      @image_url_database_factory.call(database).delete_image_name(image_name)
     end
 
     def open_landscape_image(landscape_file)

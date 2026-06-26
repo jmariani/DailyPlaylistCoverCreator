@@ -38,7 +38,7 @@ The application validates that the source folder exists and is a directory, crea
 
 It selects a random image by choosing a random item from the source folder. If the item is an image file, it moves the file to the title-named destination subfolder after approval. If the item is a folder, it repeats that selection inside the folder until an image file is found. When `--file` is provided, the app skips random selection and uses that file directly.
 
-After an image is selected, the app opens the original source image with the default application and asks you to approve it. Enter `y` or `yes` to continue. Any other answer starts another random selection. The image is moved to the destination only after you approve it.
+After an image is selected, the app opens the original source image with the default application and asks you to approve it. Enter `y` or `yes` to continue, `q` to quit, or `d` to delete the selected source image. Any other answer starts another random selection. The image is moved to the destination only after you approve it.
 
 Supported image extensions are `.gif`, `.jpg`, `.jpeg`, `.png`, and `.webp`.
 

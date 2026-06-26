@@ -468,7 +468,7 @@ class CLITest < Minitest::Test
 
         assert_equal 1, result[:status]
         assert_includes result[:stderr], "Provided source file was rejected."
-        assert_equal 1, result[:stdout].scan("Approve this source image? [y/N/q]:").length
+        assert_equal 1, result[:stdout].scan("Approve this source image? [y/N/q/d]:").length
       end
     end
   end
@@ -488,7 +488,7 @@ class CLITest < Minitest::Test
         )
 
         assert_equal 0, result[:status]
-        assert_includes result[:stdout], "Approve this source image? [y/N/q]:"
+        assert_includes result[:stdout], "Approve this source image? [y/N/q/d]:"
         assert_includes result[:stdout], "[progress] Quit requested during image approval."
         assert_includes result[:stdout], "Quitting."
         assert File.exist?(image_file)
@@ -496,6 +496,100 @@ class CLITest < Minitest::Test
         assert_nil defaults_store.saved
         assert_empty notifier.notifications
       end
+    end
+  end
+
+  def test_deletes_source_file_when_d_is_entered_at_image_approval_for_file_parameter
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_file = create_image_file(source_folder, "chosen.jpg")
+        defaults_store = FakeDefaultsStore.new
+        notifier = FakeNotifier.new
+
+        result = run_cli(
+          ["-f", image_file, "-d", destination_folder, "-t", TITLE],
+          stdin: "d\n",
+          defaults_store:,
+          notifier:
+        )
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "Approve this source image? [y/N/q/d]:"
+        assert_includes result[:stdout], "[progress] Deleting source image: #{image_file}"
+        assert_includes result[:stdout], "Deleted source image. Quitting."
+        refute File.exist?(image_file)
+        refute File.exist?(expected_destination_file(destination_folder, image_file))
+        assert_nil defaults_store.saved
+        assert_empty notifier.notifications
+      end
+    end
+  end
+
+  def test_deletes_source_file_and_database_record_when_d_is_entered_for_database_selection
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_name = "aabb-cover.jpg"
+        second_image_name = "ccdd-cover.jpg"
+        first_folder = File.join(source_folder, "aa", "bb")
+        second_folder = File.join(source_folder, "cc", "dd")
+        FileUtils.mkdir_p(first_folder)
+        FileUtils.mkdir_p(second_folder)
+        image_file = create_image_file(first_folder, image_name)
+        create_image_file(second_folder, second_image_name)
+        database_file = create_image_url_database(destination_folder, [image_name, second_image_name])
+        fake_database = FakeImageUrlDatabase.new([image_name, second_image_name])
+
+        result = run_cli(
+          ["-s", source_folder, "-d", destination_folder, "-t", TITLE, "-db", database_file],
+          stdin: "d\nq\n",
+          image_url_database_factory: ->(_path) { fake_database }
+        )
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "[progress] Deleting source image: #{image_file}"
+        assert_includes result[:stdout], "[progress] Deleting database image record: #{image_name}"
+        refute File.exist?(image_file)
+        assert_equal [image_name], fake_database.deleted_image_names
+      end
+    end
+  end
+
+  def test_deletes_database_record_after_approved_database_image_is_moved
+    Dir.mktmpdir do |source_folder|
+      Dir.mktmpdir do |destination_folder|
+        image_name = "aabb-cover.jpg"
+        image_folder = File.join(source_folder, "aa", "bb")
+        FileUtils.mkdir_p(image_folder)
+        image_file = create_image_file(image_folder, image_name)
+        database_file = create_image_url_database(destination_folder, [image_name])
+        fake_database = FakeImageUrlDatabase.new([image_name])
+
+        result = run_cli(
+          ["-s", source_folder, "-d", destination_folder, "-t", TITLE, "-db", database_file],
+          image_url_database_factory: ->(_path) { fake_database }
+        )
+
+        assert_equal 0, result[:status]
+        assert_includes result[:stdout], "[progress] Moving image to:"
+        assert_includes result[:stdout], "[progress] Deleting database image record: #{image_name}"
+        refute File.exist?(image_file)
+        assert File.exist?(expected_destination_file(destination_folder, image_file))
+        assert_equal [image_name], fake_database.deleted_image_names
+      end
+    end
+  end
+
+  def test_image_url_database_deletes_image_name
+    Dir.mktmpdir do |folder|
+      database_file = create_image_url_database(folder, ["first.jpg", "second.jpg"])
+
+      DailyPlaylistCoverCreator::ImageUrlDatabase.new(database_file).delete_image_name("first.jpg")
+      database = SQLite3::Database.new(database_file)
+      remaining = database.execute("SELECT image_name FROM image_urls ORDER BY image_name").flatten
+
+      assert_equal ["second.jpg"], remaining
+    ensure
+      database&.close
     end
   end
 
@@ -529,7 +623,7 @@ class CLITest < Minitest::Test
         assert_includes result[:stdout], "[progress] Selected image file:"
         assert_includes result[:stdout], "[progress] Moving image to:"
         assert_includes result[:stdout], "[progress] Opening source image with the default application."
-        assert_includes result[:stdout], "Approve this source image? [y/N/q]:"
+        assert_includes result[:stdout], "Approve this source image? [y/N/q/d]:"
         assert_includes result[:stdout], "[progress] Source image approved."
         assert_includes result[:stdout], "[progress] Moving image to:"
         assert_includes result[:stdout], "[progress] 16:9 and cover creation stages are disabled; stopping after selected image is stored."
@@ -690,7 +784,7 @@ class CLITest < Minitest::Test
         assert_equal 0, result[:status]
         assert_includes result[:stdout], "[progress] Source image rejected; choosing another."
         assert_includes result[:stdout], "[progress] Source image approved."
-        assert_equal 2, result[:stdout].scan("Approve this source image? [y/N/q]:").length
+        assert_equal 2, result[:stdout].scan("Approve this source image? [y/N/q/d]:").length
         assert_equal 2, image_opener.opened_paths.length
         assert_equal source_folder, File.dirname(image_opener.opened_paths.first)
         assert image_opener.opened_paths.all? { |path| File.dirname(path) == source_folder }
@@ -722,7 +816,7 @@ class CLITest < Minitest::Test
         result = run_cli(["-s", source_folder, "-d", destination_folder, "-t", TITLE], stdin: "")
 
         assert_equal 1, result[:status]
-        assert_includes result[:stdout], "Approve this source image? [y/N/q]:"
+        assert_includes result[:stdout], "Approve this source image? [y/N/q/d]:"
         assert_includes result[:stderr], "Image approval is required."
       end
     end
@@ -1027,8 +1121,11 @@ class CLITest < Minitest::Test
   end
 
   class FakeImageUrlDatabase
+    attr_reader :deleted_image_names
+
     def initialize(image_names)
       @image_names = image_names
+      @deleted_image_names = []
     end
 
     def each_random_image_name
@@ -1037,6 +1134,10 @@ class CLITest < Minitest::Test
       @image_names.each do |image_name|
         yield image_name
       end
+    end
+
+    def delete_image_name(image_name)
+      @deleted_image_names << image_name
     end
   end
 

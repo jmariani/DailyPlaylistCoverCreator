@@ -33,6 +33,13 @@ module DailyPlaylistCoverCreator
       database&.close
     end
 
+    def delete_image_name(image_name)
+      database = SQLite3::Database.new(@path)
+      database.execute("DELETE FROM image_urls WHERE image_name = ?", [image_name])
+    ensure
+      database&.close
+    end
+
     private
 
     def image_row_at_or_after_random_rowid(database, max_rowid)
