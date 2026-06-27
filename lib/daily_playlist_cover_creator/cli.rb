@@ -417,6 +417,7 @@ module DailyPlaylistCoverCreator
         return [image_file, image_name] if image_file?(image_file)
 
         progress "Database image file was not found or is not supported; selecting another record."
+        delete_database_image_record(database, image_name)
       end
 
       unless found_record

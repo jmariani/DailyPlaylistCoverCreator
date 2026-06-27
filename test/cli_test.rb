@@ -297,17 +297,20 @@ class CLITest < Minitest::Test
         FileUtils.mkdir_p(second_folder)
         image_file = create_image_file(second_folder, existing_image_name)
         database_file = create_image_url_database(destination_folder, [missing_image_name, existing_image_name])
+        fake_database = FakeImageUrlDatabase.new([missing_image_name, existing_image_name])
 
         result = run_cli(
           ["-s", source_folder, "-d", destination_folder, "-t", TITLE, "-db", database_file],
-          image_url_database_factory: ->(_path) { FakeImageUrlDatabase.new([missing_image_name, existing_image_name]) }
+          image_url_database_factory: ->(_path) { fake_database }
         )
 
         assert_equal 0, result[:status]
         assert_includes result[:stdout], "[progress] Built source path from database image name: #{File.join(source_folder, "cc", "dd", missing_image_name)}"
         assert_includes result[:stdout], "[progress] Database image file was not found or is not supported; selecting another record."
+        assert_includes result[:stdout], "[progress] Deleting database image record: #{missing_image_name}"
         assert_includes result[:stdout], "[progress] Built source path from database image name: #{image_file}"
         assert_includes result[:stdout], "Moved image: #{expected_destination_file(destination_folder, image_file)}"
+        assert_equal [missing_image_name, existing_image_name], fake_database.deleted_image_names
       end
     end
   end
@@ -322,7 +325,12 @@ class CLITest < Minitest::Test
 
         assert_equal 1, result[:status]
         assert_includes result[:stdout], "[progress] Database image file was not found or is not supported; selecting another record."
+        assert_includes result[:stdout], "[progress] Deleting database image record: #{image_name}"
         assert_includes result[:stderr], "No database image records resolved to an existing supported image file"
+        database = SQLite3::Database.new(database_file)
+        assert_empty database.execute("SELECT image_name FROM image_urls")
+      ensure
+        database&.close
       end
     end
   end
@@ -1131,13 +1139,14 @@ class CLITest < Minitest::Test
     def each_random_image_name
       return enum_for(:each_random_image_name) unless block_given?
 
-      @image_names.each do |image_name|
+      @image_names.dup.each do |image_name|
         yield image_name
       end
     end
 
     def delete_image_name(image_name)
       @deleted_image_names << image_name
+      @image_names.delete(image_name)
     end
   end
 
